@@ -1,0 +1,31 @@
+# Maxfiy
+backend/.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Backend runtime data (generatsiya qilinadi, saqlash shart emas)
+backend/uploads/*
+!backend/uploads/.gitkeep
+backend/analyses.db
+backend/server_log.txt
+backend/_screens/
+
+# Katta / regenerable ma'lumotlar (data_pipeline va training skriptlari orqali qayta yaratiladi)
+dataset/
+dataset_grid_bot.zip
+data_pipeline/output/
+data_pipeline/render_log.txt
+training/zip_log.txt
+
+# Katta CNN model (legacy, Colab orqali qayta eksport qilinadi)
+backend/model/chart_signal_model.onnx
+backend/model/chart_signal_model.onnx.data
+backend/model/norm_stats.json
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,20 @@
+{
+  "feature_names": [
+    "rsi_14",
+    "macd",
+    "macd_signal",
+    "macd_hist",
+    "atr_pct",
+    "price_vs_high30_atr",
+    "price_vs_low30_atr",
+    "sma20_dist_atr",
+    "sma50_dist_atr",
+    "bb_percent_b",
+    "momentum_10_atr"
+  ],
+  "classes": [
+    "Buy",
+    "Hold",
+    "Sell"
+  ]
+}
