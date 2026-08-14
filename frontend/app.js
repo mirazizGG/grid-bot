@@ -140,7 +140,6 @@ function renderResult(data) {
         <h3><span class="source-dot gemini"></span>Gemini Vision</h3>
         <span class="badge ${vision.signal}">${signalLabel(vision.signal)}</span>
         <p class="confidence-line">Ishonch: ${(vision.confidence * 100).toFixed(0)}%</p>
-        ${ownLevelsHtml(vision)}
         ${vision.trend ? `<p>${escapeHtml(vision.trend)}</p>` : ""}
         ${vision.reasoning ? `<p>${escapeHtml(vision.reasoning)}</p>` : ""}
       </div>
