@@ -50,9 +50,11 @@ def _format_context(ctx: dict) -> str:
         f"- RSI(14): {ctx['rsi_14']}\n"
         f"- MACD: {ctx['macd']} (signal chiziq: {ctx['macd_signal']})\n"
         f"- ATR(14): {ctx['atr_14']}\n"
-        f"- SMA(20)/SMA(50): {ctx['sma_20']} / {ctx['sma_50']}\n"
+        f"- SMA(20)/SMA(50)/SMA(100): {ctx['sma_20']} / {ctx['sma_50']} / {ctx['sma_100']}\n"
         f"- Bollinger %B: {ctx['bb_percent_b']} (0=quyi band, 1=yuqori band)\n"
         f"- Momentum(10 bar): {ctx['momentum_10']}\n"
+        f"- ADX(14): {ctx['adx_14']} (25+ = kuchli trend, 20- = trend yo'q/flat)\n"
+        f"- Stochastic %K/%D: {ctx['stoch_k']} / {ctx['stoch_d']}\n"
         f"- Oxirgi 30 bar high/low: {ctx['recent_high_30bars']} / {ctx['recent_low_30bars']}"
     )
 

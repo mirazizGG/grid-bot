@@ -9,8 +9,14 @@
     "price_vs_low30_atr",
     "sma20_dist_atr",
     "sma50_dist_atr",
+    "sma100_dist_atr",
     "bb_percent_b",
-    "momentum_10_atr"
+    "momentum_10_atr",
+    "adx_14",
+    "stoch_k",
+    "stoch_d",
+    "hour_sin",
+    "hour_cos"
   ],
   "classes": [
     "Buy",

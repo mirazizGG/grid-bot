@@ -42,8 +42,14 @@ FEATURE_NAMES = [
     "price_vs_low30_atr",
     "sma20_dist_atr",
     "sma50_dist_atr",
+    "sma100_dist_atr",
     "bb_percent_b",
     "momentum_10_atr",
+    "adx_14",
+    "stoch_k",
+    "stoch_d",
+    "hour_sin",
+    "hour_cos",
 ]
 
 
@@ -95,11 +101,56 @@ def _momentum(closes: np.ndarray, period: int = 10) -> float:
     return float(closes[-1] - closes[-1 - period])
 
 
-def compute_raw_indicators(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray) -> dict:
+def _adx(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 14) -> float:
+    """Trend kuchini o'lchaydi (yo'nalishsiz, 0-100). Wilder smoothing (EMA, alpha=1/period)."""
+    up_move = highs[1:] - highs[:-1]
+    down_move = lows[:-1] - lows[1:]
+    plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+    minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+
+    prev_close = closes[:-1]
+    tr = np.maximum(highs[1:] - lows[1:], np.maximum(np.abs(highs[1:] - prev_close), np.abs(lows[1:] - prev_close)))
+
+    alpha = 1.0 / period
+    atr_s = pd.Series(tr).ewm(alpha=alpha, adjust=False).mean()
+    plus_dm_s = pd.Series(plus_dm).ewm(alpha=alpha, adjust=False).mean()
+    minus_dm_s = pd.Series(minus_dm).ewm(alpha=alpha, adjust=False).mean()
+
+    atr_safe = atr_s.replace(0, np.nan)
+    plus_di = 100 * plus_dm_s / atr_safe
+    minus_di = 100 * minus_dm_s / atr_safe
+    di_sum = (plus_di + minus_di).replace(0, np.nan)
+    dx = 100 * (plus_di - minus_di).abs() / di_sum
+    adx = dx.ewm(alpha=alpha, adjust=False).mean().iloc[-1]
+    return float(adx) if pd.notna(adx) else 0.0
+
+
+def _stochastic(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 14, smooth_d: int = 3) -> tuple[float, float]:
+    h = pd.Series(highs).rolling(period).max()
+    l = pd.Series(lows).rolling(period).min()
+    denom = (h - l).replace(0, np.nan)
+    percent_k = 100 * (pd.Series(closes) - l) / denom
+    percent_d = percent_k.rolling(smooth_d).mean()
+    k = percent_k.iloc[-1]
+    d = percent_d.iloc[-1]
+    return (float(k) if pd.notna(k) else 50.0, float(d) if pd.notna(d) else 50.0)
+
+
+def compute_raw_indicators(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, bar_hour: float | None = None) -> dict:
     """Bar tarixi (oxirgi ~100 bar) asosida xom indikator qiymatlarini hisoblaydi.
-    Training (tarixiy slice) va live (MT5'dan olingan oxirgi bar) uchun bir xil."""
+    Training (tarixiy slice) va live (MT5'dan olingan oxirgi bar) uchun bir xil.
+    `bar_hour` -- oxirgi barning soati (0-23, server vaqti), savdo sessiyasini
+    kodlash uchun (Osiyo/London/Nyu-York momentumi farq qiladi)."""
     atr = _atr(highs, lows, closes, ATR_PERIOD)
     macd_line, macd_signal = _macd(closes)
+    stoch_k, stoch_d = _stochastic(highs, lows, closes)
+
+    if bar_hour is None:
+        hour_sin, hour_cos = 0.0, 0.0
+    else:
+        angle = 2 * np.pi * bar_hour / 24
+        hour_sin, hour_cos = float(np.sin(angle)), float(np.cos(angle))
+
     return {
         "last_close": float(closes[-1]),
         "rsi_14": round(_rsi(closes, 14), 2),
@@ -108,8 +159,14 @@ def compute_raw_indicators(highs: np.ndarray, lows: np.ndarray, closes: np.ndarr
         "atr_14": round(atr, 5),
         "sma_20": round(_sma(closes, 20), 5),
         "sma_50": round(_sma(closes, 50), 5),
+        "sma_100": round(_sma(closes, min(100, len(closes))), 5),
         "bb_percent_b": round(_bollinger_percent_b(closes, 20), 4),
         "momentum_10": round(_momentum(closes, 10), 5),
+        "adx_14": round(_adx(highs, lows, closes, 14), 2),
+        "stoch_k": round(stoch_k, 2),
+        "stoch_d": round(stoch_d, 2),
+        "hour_sin": round(hour_sin, 4),
+        "hour_cos": round(hour_cos, 4),
         "recent_high_30bars": float(highs[-30:].max()),
         "recent_low_30bars": float(lows[-30:].min()),
     }
@@ -130,8 +187,14 @@ def to_feature_vector(raw: dict) -> list[float]:
         (close - raw["recent_low_30bars"]) / atr,
         (close - raw["sma_20"]) / atr,
         (close - raw["sma_50"]) / atr,
+        (close - raw["sma_100"]) / atr,
         raw["bb_percent_b"],
         raw["momentum_10"] / atr,
+        raw["adx_14"],
+        raw["stoch_k"],
+        raw["stoch_d"],
+        raw["hour_sin"],
+        raw["hour_cos"],
     ]
 
 
@@ -156,8 +219,9 @@ def get_context(symbol: str, timeframe_name: str, n_bars: int = 100) -> dict | N
         closes = rates["close"].astype(np.float64)
         highs = rates["high"].astype(np.float64)
         lows = rates["low"].astype(np.float64)
+        bar_hour = pd.to_datetime(rates["time"][-1], unit="s").hour
 
-        raw = compute_raw_indicators(highs, lows, closes)
+        raw = compute_raw_indicators(highs, lows, closes, bar_hour=bar_hour)
         raw.update({
             "symbol": symbol,
             "timeframe": timeframe_name,
