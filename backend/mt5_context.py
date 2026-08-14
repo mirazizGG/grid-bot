@@ -28,7 +28,9 @@ if mt5 is not None:
     }
 
 ATR_PERIOD = 14
-TP_ATR_MULT = 1.5
+# training/backtest.py orqali tekshirilgan: 2:1 nisbat (ishonch>=0.55 bilan
+# birga) out-of-sample'da eng barqaror ijobiy expectancy berdi (+0.095R/savdo).
+TP_ATR_MULT = 2.0
 SL_ATR_MULT = 1.0
 
 # custom model shu tartibda va shu nomlar bilan xususiyat vektorini kutadi

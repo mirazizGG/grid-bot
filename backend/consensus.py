@@ -1,10 +1,14 @@
 """Custom model va Gemini vision natijalarini birlashtirib yakuniy qaror chiqaradi.
 
-Custom model test aniqligi past (~33%, tasodifiy daraja) bo'lgani uchun u yakuniy
-qarorni yolg'iz belgilamaydi -- faqat Gemini'ning fikrini tasdiqlaydi yoki unga shubha
-uyg'otadi. Gemini asosiy manba hisoblanadi.
+Custom model test aniqligi past (~41%, tasodifiy daraja -- 33%) bo'lgani uchun u
+yakuniy qarorni yolg'iz belgilamaydi -- faqat Gemini'ning fikrini tasdiqlaydi yoki
+unga shubha uyg'otadi. Gemini asosiy manba hisoblanadi.
+
+`training/backtest.py` orqali tekshirilgan: custom model ishonchi past bo'lganda
+(<0.55) real expectancy nolga yaqin/manfiy, shuning uchun past ishonchli signal
+Hold'ga tushiriladi -- kamroq, lekin sifatliroq signal berish strategiyasi.
 """
-from config import VISION_AI_WEIGHT, CUSTOM_MODEL_WEIGHT
+from config import VISION_AI_WEIGHT, CUSTOM_MODEL_WEIGHT, MIN_CUSTOM_MODEL_CONFIDENCE
 
 
 def compute_consensus(custom: dict, vision_ai: dict) -> dict:
@@ -16,9 +20,18 @@ def compute_consensus(custom: dict, vision_ai: dict) -> dict:
         agreement = custom_signal == "Hold"
         note = "Gemini Hold deb hisobladi -- yakuniy qaror ham Hold."
     elif custom_signal == vision_signal:
-        final_signal = vision_signal
-        agreement = True
-        note = "Ikkala model ham bir xil yo'nalishni ko'rsatdi -- ishonch yuqori."
+        if custom["confidence"] < MIN_CUSTOM_MODEL_CONFIDENCE:
+            final_signal = "Hold"
+            agreement = False
+            note = (
+                f"Ikkala model {vision_signal} yo'nalishini ko'rsatdi, lekin custom model "
+                f"ishonchi past ({custom['confidence']:.0%} < {MIN_CUSTOM_MODEL_CONFIDENCE:.0%}) "
+                "-- backtest bo'yicha bu holatda signal ishonchsiz, shuning uchun Hold."
+            )
+        else:
+            final_signal = vision_signal
+            agreement = True
+            note = "Ikkala model ham bir xil yo'nalishni ko'rsatdi va custom model ishonchi yetarli -- signal ishonchli."
     elif custom_signal == "Hold":
         final_signal = vision_signal
         agreement = False
