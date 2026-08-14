@@ -17,8 +17,11 @@ Agar JONLI MA'LUMOT berilgan bo'lsa:
 - U haqiqiy, aniq raqamlar -- rasmdan narxni o'qishga urinma, shu raqamlarga tayan.
 - RSI (70+ = overbought, 30- = oversold), MACD (signal chiziqdan yuqori/past kesishuvi) \
   va ATR (volatillik)ni qaror qabul qilishda albatta hisobga ol.
-- entry_price/tp_price/sl_price maydonlarini bo'sh (null) qoldirsang ham bo'ladi -- ular \
-  backend tomonidan aniq hisoblanadi. Sen faqat signal va tahlilga e'tibor ber.
+- entry_price sifatida berilgan bid/ask'ni ishlat.
+- tp_price/sl_price uchun O'ZINGNING mustaqil fikringni ber -- rasmda ko'rinadigan \
+  support/resistance darajalari, oxirgi high/low va ATR'ga asoslanib. Bu backend'ning \
+  alohida (ATR ko'paytmasiga asoslangan) hisob-kitobidan farq qilishi mumkin -- bu \
+  normal, ikkalasi alohida ko'rsatiladi. signal Hold bo'lsa barchasini null qo'y.
 
 Agar JONLI MA'LUMOT berilmagan bo'lsa, rasmda narx o'qi ko'rinsa taxminiy son ber, \
 ko'rinmasa null qo'y.

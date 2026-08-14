@@ -43,9 +43,17 @@ def analyze(market_context: dict | None) -> dict:
     signal = max(class_probs, key=class_probs.get)
     confidence = float(class_probs[signal])
 
+    # Custom model o'z alohida signaliga qarab TP/SL'ni ham hisoblab beradi
+    # (yakuniy qaror Hold bo'lsa ham) -- shaffoflik uchun, "agar shu modelga
+    # yolg'iz ishonilsa" degan ma'noda.
+    own_levels = mt5_context.compute_trade_levels(market_context, signal)
+
     return {
         "source": "custom_model",
         "signal": signal,
         "confidence": confidence,
         "class_probs": {k: float(v) for k, v in class_probs.items()},
+        "entry_price": own_levels["entry_price"],
+        "tp_price": own_levels["tp_price"],
+        "sl_price": own_levels["sl_price"],
     }
