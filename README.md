@@ -6,6 +6,11 @@ yakuniy **Buy/Sell/Hold** signalini, Entry/TP/SL narxlarini va nega shunday
 qaror qabul qilinganini chiqaradi. Natijalar tarix sifatida saqlanadi va
 Dashboard'da ko'riladi.
 
+> **Loyihani birinchi marta ko'rayotgan bo'lsangiz (yoki Claude Code'ga
+> "o'rganib chiq" desangiz): avval [`PROJECT_HISTORY.md`](PROJECT_HISTORY.md)
+> ni o'qing** — u yerda nima qilingani, nega hozirgi qarorlar qabul
+> qilingani va qaysi yo'llar sinab ko'rilib rad etilgani yozilgan.
+
 > **Moliyaviy maslahat emas.** Signal — yordamchi vosita, xolos. Doim
 > risk-management bilan ishlating, real pul bilan savdo qilishdan oldin
 > demo hisobda sinab ko'ring.
