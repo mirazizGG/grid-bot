@@ -134,12 +134,13 @@ function renderResult(data) {
         <h3><span class="source-dot custom"></span>Custom Model</h3>
         <span class="badge ${custom.signal}">${signalLabel(custom.signal)}</span>
         <p class="confidence-line">Ishonch: ${(custom.confidence * 100).toFixed(0)}%</p>
-        ${ownLevelsHtml(custom)}
+        ${ownLevelsGrid(custom)}
       </div>
       <div class="source-card">
         <h3><span class="source-dot gemini"></span>Gemini Vision</h3>
         <span class="badge ${vision.signal}">${signalLabel(vision.signal)}</span>
         <p class="confidence-line">Ishonch: ${(vision.confidence * 100).toFixed(0)}%</p>
+        ${ownLevelsGrid(vision)}
         ${vision.trend ? `<p>${escapeHtml(vision.trend)}</p>` : ""}
         ${vision.reasoning ? `<p>${escapeHtml(vision.reasoning)}</p>` : ""}
       </div>
@@ -149,13 +150,13 @@ function renderResult(data) {
   `;
 }
 
-function ownLevelsHtml(model) {
+function ownLevelsGrid(model) {
   if (model.signal === "Hold" || (!model.tp_price && !model.sl_price)) return "";
   return `
-    <div class="own-levels">
-      <span>Entry <b>${fmtPrice(model.entry_price)}</b></span>
-      <span>TP <b>${fmtPrice(model.tp_price)}</b></span>
-      <span>SL <b>${fmtPrice(model.sl_price)}</b></span>
+    <div class="result-grid own-levels-grid">
+      <div class="stat-tile"><div class="label">Entry</div><div class="value">${fmtPrice(model.entry_price)}</div></div>
+      <div class="stat-tile"><div class="label">Take Profit</div><div class="value">${fmtPrice(model.tp_price)}</div></div>
+      <div class="stat-tile"><div class="label">Stop Loss</div><div class="value">${fmtPrice(model.sl_price)}</div></div>
     </div>`;
 }
 
