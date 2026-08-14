@@ -21,14 +21,21 @@ from config import (
     VAL_RATIO,
 )
 
-# Faqat XAUUSD (foydalanuvchi shu bilan savdo qiladi) -- M15 va H1, imkon
-# qadar ko'proq tarix bilan.
+# XAUUSD (M15) allaqachon data_pipeline/output/ohlc_raw.parquet + labeled_windows.parquet
+# ichida bor (2995 qator) -- bu yerda YANA shu juftlik qo'shiladi (H1 bilan birga),
+# chunki bir xil funksiyalar ishlatilishi kerak (train/serve mosligi uchun).
 SYMBOL_TIMEFRAMES = [
     ("XAUUSD", "M15"),
     ("XAUUSD", "H1"),
+    ("EURUSD", "M15"),
+    ("EURUSD", "H1"),
+    ("GBPUSD", "M15"),
+    ("GBPUSD", "H1"),
+    ("USDJPY", "M15"),
+    ("USDJPY", "H1"),
 ]
 
-HISTORY_BARS = 60_000
+HISTORY_BARS = 20_000  # ko'p symbol uchun tezroq bo'lishi uchun 60000 dan kamroq
 
 OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output", "multi")
 COMBINED_OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output", "multi_labeled.parquet")
