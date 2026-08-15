@@ -14,6 +14,7 @@ import joblib
 
 from config import MODEL_DIR
 import mt5_context
+import reasoning
 
 _MODEL_PATH = os.path.join(MODEL_DIR, "numeric_model.joblib")
 _META_PATH = os.path.join(MODEL_DIR, "numeric_model_meta.json")
@@ -34,6 +35,8 @@ def analyze(market_context: dict | None) -> dict:
             "confidence": 0.34,
             "class_probs": {"Buy": 0.33, "Sell": 0.33, "Hold": 0.34},
             "note": "MT5 ulanmagani uchun raqamli indikatorlar hisoblanmadi",
+            "trend": None,
+            "reasoning": "MT5 ulanmagani uchun indikatorlarga asoslangan izoh hisoblanmadi.",
         }
 
     features = [mt5_context.to_feature_vector(market_context)]
@@ -47,6 +50,7 @@ def analyze(market_context: dict | None) -> dict:
     # (yakuniy qaror Hold bo'lsa ham) -- shaffoflik uchun, "agar shu modelga
     # yolg'iz ishonilsa" degan ma'noda.
     own_levels = mt5_context.compute_trade_levels(market_context, signal)
+    explanation = reasoning.explain(market_context, signal)
 
     return {
         "source": "custom_model",
@@ -56,4 +60,6 @@ def analyze(market_context: dict | None) -> dict:
         "entry_price": own_levels["entry_price"],
         "tp_price": own_levels["tp_price"],
         "sl_price": own_levels["sl_price"],
+        "trend": explanation["trend"],
+        "reasoning": explanation["reasoning"],
     }

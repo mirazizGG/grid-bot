@@ -26,3 +26,9 @@ VISION_AI_WEIGHT = 0.75
 # berdi (74 ta savdo namunasida). Shuning uchun past ishonchli signal Hold'ga
 # tushiriladi.
 MIN_CUSTOM_MODEL_CONFIDENCE = 0.55
+
+# Custom model va Gemini qarama-qarshi signal bersa (Buy vs Sell), Gemini
+# ishonchi shu chegaradan yuqori bo'lsa Gemini signaliga tayaniladi (custom
+# model ovozi shu holatda e'tiborga olinmaydi -- u ko'pincha xato bo'ladi).
+# Past bo'lsa xavfsizlik uchun hamon Hold.
+MIN_VISION_OVERRIDE_CONFIDENCE = 0.65

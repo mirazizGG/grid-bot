@@ -8,7 +8,12 @@ unga shubha uyg'otadi. Gemini asosiy manba hisoblanadi.
 (<0.55) real expectancy nolga yaqin/manfiy, shuning uchun past ishonchli signal
 Hold'ga tushiriladi -- kamroq, lekin sifatliroq signal berish strategiyasi.
 """
-from config import VISION_AI_WEIGHT, CUSTOM_MODEL_WEIGHT, MIN_CUSTOM_MODEL_CONFIDENCE
+from config import (
+    VISION_AI_WEIGHT,
+    CUSTOM_MODEL_WEIGHT,
+    MIN_CUSTOM_MODEL_CONFIDENCE,
+    MIN_VISION_OVERRIDE_CONFIDENCE,
+)
 
 
 def compute_consensus(custom: dict, vision_ai: dict) -> dict:
@@ -36,17 +41,29 @@ def compute_consensus(custom: dict, vision_ai: dict) -> dict:
         final_signal = vision_signal
         agreement = False
         note = "Custom model Hold, Gemini esa signal berdi -- Gemini'ga tayanildi, ishonch o'rtacha."
+    elif vision_ai["confidence"] >= MIN_VISION_OVERRIDE_CONFIDENCE:
+        final_signal = vision_signal
+        agreement = False
+        note = (
+            f"Custom model qarama-qarshi yo'nalish berdi (Sell/Buy ziddiyat), lekin Gemini ishonchi "
+            f"yetarlicha yuqori ({vision_ai['confidence']:.0%} >= {MIN_VISION_OVERRIDE_CONFIDENCE:.0%}) "
+            "-- Gemini signaliga tayanildi, ehtiyot bo'ling."
+        )
     else:
         final_signal = "Hold"
         agreement = False
-        note = "Ikkala model qarama-qarshi yo'nalish berdi (Buy vs Sell) -- xavfsizlik uchun Hold."
+        note = (
+            "Ikkala model qarama-qarshi yo'nalish berdi (Buy vs Sell) va Gemini ishonchi ham "
+            f"yetarli emas ({vision_ai['confidence']:.0%} < {MIN_VISION_OVERRIDE_CONFIDENCE:.0%}) "
+            "-- xavfsizlik uchun Hold."
+        )
 
     if agreement:
         final_confidence = VISION_AI_WEIGHT * vision_ai["confidence"] + CUSTOM_MODEL_WEIGHT * custom["confidence"]
     elif final_signal == "Hold":
         final_confidence = 0.5
     else:
-        final_confidence = vision_ai["confidence"] * 0.6  # kelishmaganda ishonchni pasaytiramiz
+        final_confidence = vision_ai["confidence"] * 0.85  # kelishmagan, lekin Gemini ishonchi yuqori bo'lgani uchun kamroq pasaytiramiz
 
     entry_price = vision_ai.get("entry_price")
     tp_price = vision_ai.get("tp_price") if final_signal != "Hold" else None

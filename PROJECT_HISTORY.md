@@ -58,8 +58,9 @@ Bir nechta variant sinaldi (natijalar **TEST split, XAUUSD M15** uchun):
 | Faqat XAUUSD + LSTM (vaqt ketma-ketligi, "video" g'oyasi) | 37% | Yordam bermadi -- ma'lumot yetarli emas edi |
 | 4 symbol + 14 yillik tarix (GitHub'dan tashqi ma'lumot) | 38% | YOMONLASHDI -- 2012-yilgi bozor rejimi hozirgidan farqli |
 | 4 symbol + 5 yillik tarix | 37% | Yana yomonlashdi |
+| 4 symbol + struktura/sham-pattern feature qo'shildi (trend_slope, swing HH/HL, candle body/wick — 17→22 feature) | 35.3% | YOMONLASHDI -- qo'shimcha feature'lar kam ma'lumotda shovqin qo'shdi, bekor qilindi (git checkout) |
 
-**Xulosa**: "4 symbol, ~2.5 yil" — bu tasodifiy topilgan "shirin nuqta".
+**Xulosa**: "4 symbol, ~2.5 yil, 17 feature" — bu tasodifiy topilgan "shirin nuqta".
 Undan ortiq yoki kamroq ma'lumot — natijani yaxshilamadi, ko'pincha
 yomonlashtirdi. Bu chegara **qayta-qayta tekshirilgan**, tasodif emas.
 
@@ -105,6 +106,43 @@ savdo namunasida). Shu sozlamalar `backend/config.py`
 **Bu qasddan qilingan**: signal endi kamroq chiqadi (ko'p holatda Hold),
 bu **kutilgan va to'g'ri xatti-harakat** — sifat > miqdor.
 
+### 7-bosqich — Gemini ustunlik qilishi (qarama-qarshi holatda)
+Foydalanuvchi real holatda ko'rdi: custom model Sell (47% ishonch),
+Gemini Buy (70% ishonch) dedi — narx aslida yuqoriga ketdi (Gemini to'g'ri
+chiqdi). Avvalgi mantiqda bunday **to'g'ridan-to'g'ri ziddiyat (Buy vs
+Sell)** har doim Hold'ga olib kelardi — bu holatda to'g'ri Gemini signali
+ham yo'qolib ketardi.
+
+**Sabab tushuntirildi**: custom model (46% aniqlik, deyarli tasodifiy)
+Gemini bilan solishtirib bo'lmaydigan darajada oddiy tizim — Gemini
+milliardlab parametrli, umumiy "tushunish"ga ega LLM, custom model esa
+faqat 17 ta raqamli ko'rsatkichga asoslangan kichik GBM. Custom modelni
+"Gemini darajasiga" olib chiqish talab qiladigan resurs (ulkan ma'lumot +
+GPU + oylab tajriba) hozirgi loyiha doirasida imkonsiz — foydalanuvchiga
+tushuntirilib, rad etildi (pastdagi ro'yxatga qarang).
+
+**Yechim**: `backend/consensus.py` — signal to'g'ridan-to'g'ri
+qarama-qarshi (Buy vs Sell) bo'lganda, agar Gemini ishonchi yetarlicha
+yuqori bo'lsa (`MIN_VISION_OVERRIDE_CONFIDENCE=0.65`,
+`backend/config.py`), custom model ovozi e'tiborga olinmaydi va Gemini
+signaliga tayaniladi (`agreement=False`, lekin signal beriladi, izohda
+ogohlantirish bilan). Gemini ishonchi past bo'lsa, hamon Hold (ikkalasi
+ham noaniq).
+
+### 8-bosqich — Custom modelga qoidaga asoslangan izoh (reasoning)
+Foydalanuvchi custom modelning ham Gemini kabi "fikrlab" matnli javob
+berishini so'radi. Custom modelni haqiqiy LLM qilib bo'lmasligi
+tushuntirilgandan so'ng, oraliq yechim tanlandi: `backend/reasoning.py` --
+custom model chiqargan signal (Buy/Sell/Hold) qaysi indikator qiymatlari
+(RSI, MACD, ADX, Stochastic, SMA trend) bilan bog'liqligini qoidaga
+asoslangan (rule-based, LLM emas) matnga aylantiradi va Gemini'nikiga
+o'xshash `trend`/`reasoning` maydonlarini qaytaradi.
+
+**Muhim**: bu **aniqlikni oshirmaydi** (custom model hamon ~46%) -- faqat
+signalni **tushunarli qiladi**. `backend/custom_model.py` endi
+`reasoning.explain()`ni chaqiradi, frontend (`frontend/app.js`) custom model
+kartasida ham shu matnni ko'rsatadi.
+
 ### Rad etilgan g'oyalar (qayta taklif qilmang)
 - **Video darslardan freym olib label qilish**: rad etildi, chunki
   freym'dan keyin narx qayerga ketganini tekshirib bo'lmaydi (label
@@ -115,6 +153,14 @@ bu **kutilgan va to'g'ri xatti-harakat** — sifat > miqdor.
   ular orasidagi "xilma-xillik" foydasi kichik, xarajat esa 2 baravar.
 - **Ko'proq tarixiy/ko'proq symbol ma'lumot**: yuqorida ko'rsatilgandek,
   4-marta sinaldi, hech biri yordam bermadi.
+- **Custom modelni "Gemini kabi fikrlaydigan" qilish** (struktura/sham-pattern
+  feature qo'shish orqali): sinaldi, 46%dan 35.3%ga tushirdi, bekor qilindi.
+  Custom model va Gemini fundamental jihatdan boshqa toifadagi tizimlar --
+  biri kichik statistik model (~8000 qator ma'lumot), ikkinchisi milliardlab
+  parametrli LLM. Custom modelni Gemini darajasiga olib chiqish uchun kerak
+  bo'ladigan resurs (ma'lumot+compute) loyiha doirasida yo'q -- bu
+  tushuntirildi. Buning o'rniga consensus mantig'ida Gemini ustunlik qiladi
+  (7-bosqichga qarang).
 
 ## Hozirgi faol konfiguratsiya (muhim raqamlar)
 

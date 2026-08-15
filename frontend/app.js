@@ -135,6 +135,8 @@ function renderResult(data) {
         <span class="badge ${custom.signal}">${signalLabel(custom.signal)}</span>
         <p class="confidence-line">Ishonch: ${(custom.confidence * 100).toFixed(0)}%</p>
         ${ownLevelsGrid(custom)}
+        ${custom.trend ? `<p>${escapeHtml(custom.trend)}</p>` : ""}
+        ${custom.reasoning ? `<p>${escapeHtml(custom.reasoning)}</p>` : ""}
       </div>
       <div class="source-card">
         <h3><span class="source-dot gemini"></span>Gemini Vision</h3>
