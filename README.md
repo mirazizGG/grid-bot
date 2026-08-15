@@ -10,6 +10,7 @@ Dashboard'da ko'riladi.
 > "o'rganib chiq" desangiz): avval [`PROJECT_HISTORY.md`](PROJECT_HISTORY.md)
 > ni o'qing** — u yerda nima qilingani, nega hozirgi qarorlar qabul
 > qilingani va qaysi yo'llar sinab ko'rilib rad etilgani yozilgan.
+> Joriy 1-haftalik sinov jurnali: [`TESTING_LOG.md`](TESTING_LOG.md).
 
 > **Moliyaviy maslahat emas.** Signal — yordamchi vosita, xolos. Doim
 > risk-management bilan ishlating, real pul bilan savdo qilishdan oldin

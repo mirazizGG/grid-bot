@@ -143,6 +143,18 @@ signalni **tushunarli qiladi**. `backend/custom_model.py` endi
 `reasoning.explain()`ni chaqiradi, frontend (`frontend/app.js`) custom model
 kartasida ham shu matnni ko'rsatadi.
 
+### 9-bosqich — 1-haftalik amaliy kuzatuv (2026-08-15 dan)
+Foydalanuvchi 3-4 chi LLM (GPT/Claude/Grok) qo'shishni taklif qildi --
+tushuntirildi: bularning aksariyati bepul API tarifiga ega emas, va
+qo'shimcha LLM narxni bashorat qilish tub muammosini hal qilmaydi (barcha
+LLM'lar bir xil turdagi, xilma-xillik kam). Kelishildi: 1 hafta davomida
+pul sarflamasdan, hozirgi tuzatilgan consensus (7-8-bosqich) qanday
+ishlayotganini kuzatamiz. Har bir natija **`TESTING_LOG.md`**ga yoziladi
+(foydalanuvchi natija yuboradi -> Claude shu faylga yozadi va xulosa
+qo'shadi) -- shu bilan boshqa kompyuterdan kirilsa ham davomiylik
+saqlanadi. 1 hafta so'ng shu jurnal asosida keyingi qadam (masalan
+pullik ikkinchi LLM qo'shish yoki hozirgidek qolish) hal qilinadi.
+
 ### Rad etilgan g'oyalar (qayta taklif qilmang)
 - **Video darslardan freym olib label qilish**: rad etildi, chunki
   freym'dan keyin narx qayerga ketganini tekshirib bo'lmaydi (label
