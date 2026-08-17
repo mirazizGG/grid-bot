@@ -68,6 +68,21 @@ deb belgilanadi va haftalik xulosaga kiritilmaydi.
   bu kutilgan/loyihalangan xulq-atvor, xato emas. Foydalanuvchidan **hozirgi
   vaqtda** olingan screenshot bilan qayta test so'raldi.
 
+### 2026-08-17 -- XAUUSD M15
+- Final signal: Hold (ishonch 50%)
+- Custom model: Buy (ishonch: 49%)
+- Gemini: Buy (ishonch: 70%)
+- Kelishuv: ha yo'nalishda (ikkalasi ham Buy), lekin custom ishonchi past
+  (49% < 55%) bo'lgani uchun tizim Hold'ga o'tdi
+- Keyinchalik natija: hali noma'lum (kuzatib boriladi)
+- Claude xulosasi: Yana o'sha 55% chegara holati -- ikkala model bir xil
+  yo'nalishda (Buy), Gemini ishonchi baland (70%), custom model chegaraga
+  juda yaqin (49%, atigi 6 punkt kam). Consensus mantiqan to'g'ri ishladi,
+  lekin bu ikkinchi marta ketma-ket shu xil holat ("ikkalasi rozi, custom
+  ishonchi chegaradan sal past -> Hold") -- agar bu naqsh davom etsa, 55%
+  chegara biroz qattiqroq bo'lishi mumkinligini (masalan 50%ga tushirish)
+  hafta oxirida ko'rib chiqish kerak.
+
 ## Haftalik xulosa (1 hafta to'lgach shu yerga yoziladi)
 
 _(hali to'ldirilmagan)_
