@@ -21,6 +21,10 @@ data_pipeline/output/
 data_pipeline/render_log.txt
 training/zip_log.txt
 
+# Tajriba modeli (v2, deploy qilinmagan -- natijasi yaxshi chiqmadi, PROJECT_HISTORY.md'da yozilgan)
+backend/model/numeric_model_v2.joblib
+backend/model/numeric_model_v2_meta.json
+
 # Katta CNN model (legacy, Colab orqali qayta eksport qilinadi)
 backend/model/chart_signal_model.onnx
 backend/model/chart_signal_model.onnx.data

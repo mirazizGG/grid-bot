@@ -243,6 +243,46 @@ feature + ~8000 qatorlik data bilan algoritm darajasida yechilmaydigan
 chegara ko'rinadi -- yagona qolgan real yo'nalish **ko'proq/boshqacha data**
 (masalan uzoqroq tarix yoki boshqa label metodologiyasi), algoritm emas.
 
+### 11-bosqich — 5x ko'proq tarixiy data bilan alohida model (2026-08-17)
+
+Foydalanuvchi talabi: joriy deploy qilingan modelga tegmasdan, ancha kattaroq
+datasetdan **alohida yangi model** yaratib solishtirish.
+
+- `data_pipeline/multi_symbol_dataset_v2.py`: MT5'dan har symbol/timeframe
+  uchun oldingi 20,000 bar o'rniga **99,999 bar** (terminal `maxbars=100000`
+  chegarasi) tortib olindi -- XAUUSD H1/EURUSD H1/GBPUSD H1/USDJPY H1 uchun
+  ~2010-yildan buyon (~16 yil), M15 juftliklar uchun broker tarixi cheklovi
+  tufayli ~2022-yildan buyon (~4 yil). Natija: **39,960 qator** (avvalgi
+  7,960dan 5x ko'p).
+- `training/train_numeric_model_v2.py`: xuddi shu feature pipeline
+  (`mt5_context.py`, train/serve parity buzilmadi), xuddi shu
+  GradientBoostingClassifier parametrlari bilan o'qitildi, natija
+  `backend/model/numeric_model_v2.joblib` ga saqlandi (**deploy qilingan
+  `numeric_model.joblib`ga tegilmadi**).
+
+**Natija**: XAUUSD M15 TEST = **36.9%** (n=750), umumiy TEST = 39.1% (n=6000).
+Joriy (kichik data, ~8k qator) modelning shu kunda xolis o'lchangan bazaviy
+natijasi (39.3% XAUUSD M15, n=150) bilan solishtirganda -- **sezilarli farq
+yo'q**, agar biror narsa bo'lsa ozgina yomonroq. Muhimi, bu safar test hajmi
+ancha katta (750 vs 150), shuning uchun bu natija avvalgilariga qaraganda
+ancha ishonchliroq: **5x ko'proq tarixiy data aniqlikni oshirmadi**.
+
+**Umumiy xulosa (10 va 11-bosqichlar birgalikda)**: 6 ta mustaqil yo'nalish
+sinaldi -- hyperparameter tuning, 4 xil algoritm oilasi, class balancing,
+2-klass reformatlash, va endi 5x ko'proq data -- **birortasi ham ishonchli
+ravishda yaxshilanish bermadi**. Bu custom modelning ~35-40% aniqlik
+darajasi tasodifiy emas, balki **hozirgi 17 ta indikator-feature + ATR
+triple-barrier label dizayni bilan real chegara** ekanini ko'rsatadi.
+Buni yengish uchun endi faqat **butunlay boshqacha yondashuv** kerak bo'lishi
+mumkin (masalan butunlay boshqa label metodologiyasi, yoki narx bashorati
+o'rniga boshqa maqsad funksiyasi) -- shu chegara doirasida yana ma'lumot yoki
+algoritm bilan "kuchaytirish" endi oqilona emas.
+
+Fayllar: `data_pipeline/output/multi_v2*`, `backend/model/numeric_model_v2.*`
+repo'da **saqlanmaydi** (`.gitignore`, katta va qayta generatsiya qilinadigan) --
+faqat skriptlar (`multi_symbol_dataset_v2.py`, `train_numeric_model_v2.py`)
+versiyalanadi, kerak bo'lsa qayta ishga tushirish mumkin.
+
 ## Keyingi safar nima qilish mumkin (agar davom ettirilsa)
 
 - Ma'lumot miqdorini oshirish orqali aniqlikni yanada oshirishga
