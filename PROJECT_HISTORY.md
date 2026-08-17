@@ -198,6 +198,51 @@ pullik ikkinchi LLM qo'shish yoki hozirgidek qolish) hal qilinadi.
 | `training/train_colab.ipynb`, `train_sequence_model.py` | Legacy/tajriba, referens uchun saqlanadi |
 | `training/backtest.py` | **FAOL** -- yangi threshold/R:R sinash kerak bo'lsa ishlatiladi |
 
+### 10-bosqich — Algoritm/hyperparameter tajribalari (2026-08-17)
+
+Foydalanuvchi so'rovi bilan custom model aniqligini oshirish uchun bir nechta
+algoritmik yo'l sinaldi (`training/tune_hyperparams.py`, `tune_v2.py`,
+`tune_v3_binary.py` -- barchasi repo'da qoldirilgan, qayta ishlatish mumkin):
+
+1. **Optuna hyperparameter qidiruv** (150 trial, umumiy VAL accuracy'ga
+   optimallashtirilgan) -- Hold klassini butunlay yo'q qildi, XAUUSD M15
+   TEST'ni 46%dan 34.7%ga tushirdi. Bekor qilindi.
+2. **4 xil model oilasi** (sklearn GBM, HistGradientBoosting, LightGBM,
+   XGBoost) — har biri balanslangan va balanslanmagan `class_weight` bilan
+   sinaldi. **Balanslash barcha 4 oilada ham izchil yomonlashtirdi**
+   (29-35% oralig'ida) — bu yagona izchil, ishonchli xulosa.
+   Balanslanmagan versiyalar orasida aniq g'olib chiqmadi (barchasi
+   38-40% atrofida, joriy modeldan yaxshi emas).
+3. **2-klass qayta formatlash** (Hold'ni o'qitishdan chiqarib, faqat
+   Buy/Sell farqini o'rgatib, ishonch pastligida Hold qo'yish) — turli
+   threshold sinaldi, hech biri joriy modeldan yaxshi chiqmadi (threshold
+   oshgani sari Hold haddan tashqari ko'p bashorat qilinib, aniqlik
+   pasaydi: 40%dan 21%gacha).
+
+**Muhim kashfiyot**: shu tajribalar davomida, xuddi shu kod + xuddi shu
+parametr + xuddi shu random_state bilan modelni qayta o'qitish **hujjatlashtirilgan
+46%ni qayta bermadi** (39% chiqdi). Sabab topildi: `backend/requirements.txt`da
+`scikit-learn>=1.5` va `numpy>=1.26` qattiq versiyaga bog'lanmagan edi;
+`pip install optuna/lightgbm/xgboost` fonda ularni yangilab yubordi
+(scikit-learn 1.9.0, numpy 2.4.4), bu esa GradientBoostingClassifier'ning
+random_state bilan bog'liq ichki xatti-harakatini o'zgartirdi. **Tuzatildi**:
+`requirements.txt`da endi `scikit-learn==1.9.0` va `numpy==2.4.4` qattiq
+belgilangan -- kelajakda shunday drift qayta bo'lmasligi uchun.
+
+Bundan tashqari shuni ko'rsatdiki: XAUUSD M15 TEST subset atigi **150 qator**
+-- bunday kichik namunada bir necha foizlik farq (masalan 38% vs 46%) katta
+ehtimol bilan shunchaki tasodifiy shovqin, haqiqiy yaxshilanish/yomonlashish
+emas. Kelajakda solishtirish qilinganda to'liq TEST (1200 qator) yoki
+bir nechta random_state bo'yicha o'rtacha olish tavsiya etiladi.
+
+**Xulosa**: hech bir algoritmik/hyperparameter o'zgarishi joriy deploy
+qilingan modeldan ishonchli ravishda yaxshi chiqmadi. Deploy qilingan model
+**o'zgartirilmadi** (git holatida qoldi). Custom model performance plafoni
+(~40-46% atrofi, aniq raqam kichik test hajmi tufayli noaniq) hozirgi 17
+feature + ~8000 qatorlik data bilan algoritm darajasida yechilmaydigan
+chegara ko'rinadi -- yagona qolgan real yo'nalish **ko'proq/boshqacha data**
+(masalan uzoqroq tarix yoki boshqa label metodologiyasi), algoritm emas.
+
 ## Keyingi safar nima qilish mumkin (agar davom ettirilsa)
 
 - Ma'lumot miqdorini oshirish orqali aniqlikni yanada oshirishga
