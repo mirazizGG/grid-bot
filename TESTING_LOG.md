@@ -82,6 +82,17 @@ deb belgilanadi va haftalik xulosaga kiritilmaydi.
   ishonchi chegaradan sal past -> Hold") -- agar bu naqsh davom etsa, 55%
   chegara biroz qattiqroq bo'lishi mumkinligini (masalan 50%ga tushirish)
   hafta oxirida ko'rib chiqish kerak.
+- **Yangilanish (2026-08-18, MT5 tarixi bilan tekshirildi)**: Entry
+  (4401.53)dan keyin narx bir necha bar ichida 4377gacha tushib, **ikkala
+  model SL darajasini ham (custom 4395.70, Gemini 4394.00) buzgan** --
+  keyinroq narx kuchli ko'tarilib 4436gacha chiqqan bo'lsa-da, bu allaqachon
+  SL urilgandan keyingi harakat, ahamiyatsiz. **Agar Buy savdo qilingan
+  bo'lsa -- zararli bo'lardi.** Tizimning yakuniy Hold qarori (custom model
+  ishonchi 55% chegaradan past bo'lgani sabab) bu safar foydali bo'ldi --
+  ikkala model yo'nalishda kelishgan bo'lsa ham, yo'nalish o'zi noto'g'ri
+  chiqdi. Claude xulosasi: bu 55% ishonch chegarasini pasaytirish g'oyasiga
+  qarshi dalil -- aksincha, past ishonchli custom model signalini e'tiborsiz
+  qoldirish (hozirgi xulq) to'g'ri strategiya ekanini tasdiqladi.
 
 ## Haftalik xulosa (1 hafta to'lgach shu yerga yoziladi)
 
