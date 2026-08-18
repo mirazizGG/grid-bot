@@ -94,6 +94,22 @@ deb belgilanadi va haftalik xulosaga kiritilmaydi.
   qarshi dalil -- aksincha, past ishonchli custom model signalini e'tiborsiz
   qoldirish (hozirgi xulq) to'g'ri strategiya ekanini tasdiqladi.
 
+### 2026-08-18 -- XAUUSD M15 (qarama-qarshi holat)
+- Final signal: Hold (ishonch 50%)
+- Custom model: Sell (ishonch: 42%)
+- Gemini: Buy (ishonch: 50%)
+- Kelishuv: yo'q (Buy vs Sell ziddiyat), Gemini ishonchi ham 65% override
+  chegarasidan past (50% < 65%) -- shuning uchun xavfsizlik uchun Hold
+- Keyinchalik natija: hali noma'lum (kuzatib boriladi)
+- Claude xulosasi: Bu -- 7-bosqichda qo'shilgan Gemini-override mantig'ining
+  "ishlamagan" tarafi: Gemini ishonchi 65% chegaraga yetmagani uchun override
+  qilmadi, to'g'ri xavfsizlik choralari ishladi. E'tiborli narsa: ikkala model
+  ham o'zaro zaif ishonch bilan (42%, 50%) qarama-qarshi signal berdi --
+  RSI/Stochastic bo'yicha oversold ko'rinishi bor (custom: RSI 30, Stoch 13),
+  bu odatda "pastga trend davom etadi" (Sell) va "tez orada tiklanish keladi"
+  (Buy) degan ikki xil talqinni tug'diradigan klassik noaniq holat. Hold
+  qarori mantiqan asosli.
+
 ## Haftalik xulosa (1 hafta to'lgach shu yerga yoziladi)
 
 _(hali to'ldirilmagan)_
