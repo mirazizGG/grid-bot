@@ -110,6 +110,24 @@ deb belgilanadi va haftalik xulosaga kiritilmaydi.
   (Buy) degan ikki xil talqinni tug'diradigan klassik noaniq holat. Hold
   qarori mantiqan asosli.
 
+### 2026-08-18 -- XAUUSD M15 (#2)
+- Final signal: Hold (ishonch 50%)
+- Custom model: Buy (ishonch: 37%)
+- Gemini: Buy (ishonch: 70%)
+- Kelishuv: ha yo'nalishda (ikkalasi Buy), lekin custom ishonchi past
+  (37% < 55%) -- Hold
+- Keyinchalik natija: hali noma'lum (kuzatib boriladi)
+- Claude xulosasi: Bu -- 3-marta ketma-ket "ikkalasi rozi (Buy), custom
+  ishonchi 55% chegaradan past, Gemini 70% yaqin" naqshi (17-avgust va
+  shu kungi #1 bilan solishtiring). Farqi: bu safar custom ishonchi ancha
+  pastroq (37%, oldingilarida 46-49% edi) -- ya'ni custom model o'zi ham
+  o'z signalidan unchalik ishonchli emas. 17-avgustdagi shunga o'xshash
+  holat (Buy/Buy, past custom ishonch) keyinchalik SL urilib yomon chiqqan
+  edi -- agar bu naqsh yana takrorlansa, "ikkalasi Buy/Sell'da rozi, lekin
+  custom ishonchi past" holatlarining haqiqiy statistikasi hafta oxirida
+  alohida ko'rib chiqilishi kerak (hozircha 55% chegara mantiqan to'g'ri
+  ishlab turibdi -- oldingi holat buni tasdiqladi).
+
 ## Haftalik xulosa (1 hafta to'lgach shu yerga yoziladi)
 
 _(hali to'ldirilmagan)_
