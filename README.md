@@ -1,101 +1,108 @@
-# Grid-Bot — MT5 Chart Tahlil Tizimi
+# Grid-Bot — Trading Chart Analysis Engine
 
-Savdo chart (candlestick) skrinshotini yuklaysiz — tizim ikkita mustaqil
-manbani solishtirib (o'zi o'qitilgan raqamli model + Gemini AI vision),
-yakuniy **Buy/Sell/Hold** signalini, Entry/TP/SL narxlarini va nega shunday
-qaror qabul qilinganini chiqaradi. Natijalar tarix sifatida saqlanadi va
-Dashboard'da ko'riladi.
+> 🇺🇿 O'zbekcha hujjat: [README.uz.md](README.uz.md)
+> ⚠️ **Not financial advice.** The signal is a decision-support tool only. Always
+> use your own risk management and test on a demo account before trading real money.
 
-> **Loyihani birinchi marta ko'rayotgan bo'lsangiz (yoki Claude Code'ga
-> "o'rganib chiq" desangiz): avval [`PROJECT_HISTORY.md`](PROJECT_HISTORY.md)
-> ni o'qing** — u yerda nima qilingani, nega hozirgi qarorlar qabul
-> qilingani va qaysi yo'llar sinab ko'rilib rad etilgani yozilgan.
-> Joriy 1-haftalik sinov jurnali: [`TESTING_LOG.md`](TESTING_LOG.md).
+Upload a candlestick chart screenshot. The system runs **two independent
+analysts** over it and merges their verdicts:
 
-> **Moliyaviy maslahat emas.** Signal — yordamchi vosita, xolos. Doim
-> risk-management bilan ishlating, real pul bilan savdo qilishdan oldin
-> demo hisobda sinab ko'ring.
+1. **Numeric model** — a scikit-learn model trained on technical indicators
+   (RSI, MACD, ATR, SMA, Bollinger %B) pulled live from MetaTrader 5. It never
+   sees the image.
+2. **Gemini vision** — Google's multimodal model looks at the chart *and* the
+   same live indicator context, and reasons about trend, support/resistance and
+   candle patterns.
 
-## Loyiha tuzilishi
+When both agree → a higher-confidence **Buy / Sell / Hold** signal with
+ATR-based Entry / TP / SL levels and a written rationale. When they disagree →
+**Hold**, by design. Every run is stored and shown on a history dashboard.
+
+## Why it's built this way
+
+Two uncorrelated sources of evidence (pure numbers vs. visual pattern reading)
+catch each other's blind spots. The consensus gate trades signal frequency for
+signal quality — see [`PROJECT_HISTORY.md`](PROJECT_HISTORY.md) for the
+approaches that were tried and rejected, and [`TESTING_LOG.md`](TESTING_LOG.md)
+for the running trial log.
+
+## Stack
+
+| Layer | Tech |
+|---|---|
+| Backend | Python 3.11, FastAPI, Uvicorn, SQLAlchemy + SQLite |
+| ML | scikit-learn, a PyTorch sequence model, joblib |
+| Market data | MetaTrader5 Python API (live price + indicators) |
+| Vision | `google-genai` (Gemini) |
+| Frontend | Vanilla HTML/CSS/JS dashboard, served by the backend |
+| Data pipeline | pandas, pyarrow, mplfinance for history fetch + chart rendering |
+
+## Architecture
 
 ```
-grid-bot/
-├── backend/          FastAPI server: tahlil, consensus, tarix (SQLite)
-│   ├── main.py            API endpoint'lar (/analyze, /history, /stats)
-│   ├── mt5_context.py     MT5'dan jonli narx + RSI/MACD/ATR/SMA/Bollinger
-│   ├── custom_model.py    Raqamli indikatorlar asosidagi model (aktiv)
-│   ├── custom_model_legacy_cnn.py   Eski rasm-CNN model (endi ishlatilmaydi)
-│   ├── gemini_vision.py   Gemini API orqali chart+kontekst tahlili
-│   ├── consensus.py       Ikkala natijani birlashtirish mantig'i
-│   ├── db.py              SQLite (tarix)
-│   └── model/             Raqamli model fayli (numeric_model.joblib)
-├── frontend/         Vanilla HTML/CSS/JS dashboard (backend shu papkani serve qiladi)
-├── data_pipeline/    MT5'dan tarixiy ma'lumot olish, label yaratish, chart rasm generatsiyasi
-└── training/         Model o'qitish skriptlari (Colab CNN + local raqamli model)
+chart image + symbol/timeframe
+        │
+        ▼
+┌───────────────────┐     ┌──────────────────────┐
+│  mt5_context.py   │────▶│  numeric model       │  (indicators only)
+│  live RSI/MACD/…  │     │  custom_model.py     │──┐
+└───────────────────┘     └──────────────────────┘  │
+        │                                           ▼
+        │                 ┌──────────────────────┐  consensus.py
+        └────────────────▶│  gemini_vision.py    │──▶  Buy/Sell/Hold
+              image +     │  (image + context)   │     + Entry/TP/SL
+              context     └──────────────────────┘     + rationale
+                                                        │
+                                                        ▼
+                                              SQLite history → dashboard
 ```
 
-## Talablar
+## Run it
 
-- Windows + **MetaTrader 5** terminali (o'rnatilgan, demo/real hisobga kirilgan, ochiq turishi kerak)
-- Python 3.11+
-- Gemini API kaliti ([aistudio.google.com](https://aistudio.google.com) dan bepul olinadi)
+Requirements: Windows + MetaTrader 5 terminal (installed, logged into a
+demo/real account, kept open), Python 3.11+, and a free Gemini API key from
+[aistudio.google.com](https://aistudio.google.com).
 
-## O'rnatish (yangi kompyuterda)
-
-```powershell
+```bash
 git clone https://github.com/mirazizGG/grid-bot.git
 cd grid-bot
 
 python -m venv .venv
-.venv\Scripts\activate
-
+.venv\Scripts\activate            # Windows
 pip install -r backend/requirements.txt
-```
 
-### API kalitni sozlash
+copy backend\.env.example backend\.env   # then put your GEMINI_API_KEY in it
 
-```powershell
-copy backend\.env.example backend\.env
-```
-
-`backend\.env` faylini oching va haqiqiy Gemini kalitingizni qo'ying:
-
-```
-GEMINI_API_KEY=sizning_kalitingiz
-```
-
-### Ishga tushirish
-
-MT5 terminali ochiq va hisobga kirilgan bo'lishi kerak (jonli narx/RSI/MACD olish uchun — bo'lmasa ham ishlaydi, lekin Gemini faqat rasmga qarab taxmin qiladi).
-
-```powershell
 cd backend
 python -m uvicorn main:app --host 127.0.0.1 --port 8811
 ```
 
-Brauzerda oching: **http://127.0.0.1:8811**
+Open **http://127.0.0.1:8811**. MT5 running and logged in is recommended (for
+live indicators) but not required — without it Gemini falls back to the image
+alone.
 
-## Muhim eslatma: katta fayllar repo'da yo'q
+## Repo layout
 
-Quyidagilar `.gitignore` orqali repo'dan chiqarib tashlangan (juda katta va
-qayta generatsiya qilinadigan bo'lgani uchun):
+```
+backend/         FastAPI server: analysis, consensus, history
+  mt5_context.py     live price + RSI/MACD/ATR/SMA/Bollinger from MT5
+  custom_model.py    active numeric-indicator model
+  sequence_model.py  PyTorch sequence model
+  gemini_vision.py   Gemini image + context analysis
+  consensus.py       merge logic for the two verdicts
+  reasoning.py       human-readable rationale builder
+  db.py              SQLite history
+frontend/        dashboard (served by the backend)
+data_pipeline/   MT5 history fetch → label generation → chart rendering
+training/        model training scripts (numeric + Colab CNN + sequence)
+```
 
-| Nima | Qayerda | Qayta yaratish |
-|---|---|---|
-| Tarixiy OHLC + chart rasmlari | `dataset/`, `data_pipeline/output/` | `data_pipeline/mt5_fetch.py` → `label_generator.py` → `render_charts.py` |
-| Eski rasm-CNN model | `backend/model/chart_signal_model.onnx*` | `training/train_colab.ipynb` (Google Colab, GPU) — hozir ishlatilmaydi |
-| `.env` (API kalit) | `backend/.env` | Yuqoridagi "API kalitni sozlash" bo'limi |
+Large / regenerable assets (historical OHLC, chart image datasets, the legacy
+CNN model) are gitignored — the table in [`README.uz.md`](README.uz.md#muhim-eslatma-katta-fayllar-repoda-yoq)
+lists how to regenerate each. The active model
+(`backend/model/numeric_model.joblib`, ~750 KB) **is** committed, so no
+retraining is needed to run the app.
 
-**`backend/model/numeric_model.joblib`** (aktiv model, ~750 KB) repo'da **bor** —
-qayta o'qitish shart emas. Agar qayta o'qitmoqchi bo'lsangiz:
-`training/train_numeric_model.py` (avval `data_pipeline` orqali ma'lumot tayyor bo'lishi kerak).
+## License
 
-## Qanday ishlaydi (qisqacha)
-
-1. Siz chart rasmini + Symbol/Timeframe tanlaysiz → yuklaysiz.
-2. Backend MT5'dan shu symbol uchun jonli narx, RSI, MACD, ATR, SMA, Bollinger %B oladi.
-3. **Custom model** — shu raqamli ko'rsatkichlarga qarab (rasmni ko'rmaydi) Buy/Sell/Hold aytadi.
-4. **Gemini** — rasmni + shu raqamli ko'rsatkichlarni birga ko'rib, mustaqil xulosa chiqaradi.
-5. Ikkalasi kelishsa — yuqori ishonchli signal, TP/SL ATR asosida aniq hisoblanadi.
-   Kelishmasa — xavfsizlik uchun **Hold**.
-6. Natija tarixga saqlanadi, Dashboard'da ko'rinadi.
+MIT — see [LICENSE](LICENSE).
