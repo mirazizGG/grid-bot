@@ -33,3 +33,6 @@ backend/model/norm_stats.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Baza zaxiralari (backend/db_backup.py)
+backups/

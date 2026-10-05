@@ -81,6 +81,16 @@ Open **http://127.0.0.1:8811**. MT5 running and logged in is recommended (for
 live indicators) but not required — without it Gemini falls back to the image
 alone.
 
+### Moving history between machines
+
+`backend/analyses.db` and `backend/uploads/` are not in git. To carry your
+analysis history over:
+
+```bash
+python backend/db_backup.py export            # -> backups/grid-bot-backup-<time>.zip
+python backend/db_backup.py import <zip>      # merges; never deletes, skips duplicates
+```
+
 ## Repo layout
 
 ```
