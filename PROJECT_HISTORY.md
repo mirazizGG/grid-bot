@@ -283,6 +283,36 @@ repo'da **saqlanmaydi** (`.gitignore`, katta va qayta generatsiya qilinadigan) -
 faqat skriptlar (`multi_symbol_dataset_v2.py`, `train_numeric_model_v2.py`)
 versiyalanadi, kerak bo'lsa qayta ishga tushirish mumkin.
 
+### 12-bosqich — Meta-labeling tajribasi va Gemini konteksti (2026-10-05)
+
+**Gemini kuchaytirildi** (`gemini_vision.py`, `mt5_context.py`): rasm bilan birga endi
+oxirgi 20 sham jadvali, swing struktura (HH/HL/LH/LL), yuqori timeframe trendi beriladi;
+promptga yon bozor (ADX<20 -> Hold) va yuqori-TF qoidalari qo'shildi; temperature=0;
+`prompt_version="v2-structure"` har natijaga yoziladi (eski/yangi promptni baholashda
+solishtirish uchun). **Hali jonli baholanmagan** -- foydasi evaluator natijalari bilan
+tekshirilishi kerak.
+
+**Meta-labeling sinaldi** (`training/meta_label_experiment.py`, deploy modelga tegilmadi):
+qoidaga asoslangan trend signali (ADX>=20 + SMA20/50/close bir yo'nalishda) + model
+"bu signal yutadimi?" (2 sinf). TP=2ATR/SL=1ATR, gorizont 48 bar, 4 symbol x M15/H1,
+87k signal (2009-2026), walk-forward (5 fold, purging), blok-bootstrap CI.
+
+Natija: **ustunlik yo'q**.
+- Filtrsiz birlamchi signal: win 32.2%, o'rtacha -0.043R (95% CI [-0.060, -0.027]) --
+  qoidaning o'zi break-even'dan (33%) past.
+- Model saralash qobiliyati AUC = 0.509 (fold'lar 0.501-0.518) -- tasodifiy.
+- Model hech qachon p>=0.45 bermadi; top-30% filtri: -0.015R, CI [-0.041, +0.009] (nolni o'z ichiga oladi).
+- Faqat XAUUSD H1 filtrsiz +0.038R (CI [-0.009, +0.088]) -- ham ahamiyatsiz.
+
+**Xulosa**: 17 ta indikator-xususiyat bu label uchun deyarli hech qanday bashorat
+signali bermaydi -- na 3 sinfli yo'nalishda (10-11-bosqichlar), na meta-labeling
+shaklida. Bu endi 7 ta mustaqil yo'nalishda tasdiqlandi. Custom model qiymati
+"ishonch filtri" sifatida ham isbotlanmagan (backtestdagi +0.095R 74 savdoli
+namunada shovqin bo'lishi ehtimoli katta). Indikatorlar asosidagi modelni
+yaxshilashga qo'shimcha vaqt sarflash o'rniga: Gemini natijalarini evaluator bilan
+yig'ish yoki **butunlay boshqa turdagi ma'lumot** (masalan hajm/order flow, makro
+kalendar) kerak.
+
 ## Keyingi safar nima qilish mumkin (agar davom ettirilsa)
 
 - Ma'lumot miqdorini oshirish orqali aniqlikni yanada oshirishga
