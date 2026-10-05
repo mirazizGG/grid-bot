@@ -26,6 +26,16 @@ Agar JONLI MA'LUMOT berilgan bo'lsa:
   taqiqlangan. Bu backend'ning alohida hisob-kitobidan farq qilishi mumkin -- bu normal, \
   ikkalasi alohida ko'rsatiladi. FAQAT signal Hold bo'lsa barchasini null qo'y.
 
+Qo'shimcha qoidalar (sham jadvali, swing struktura va yuqori timeframe berilgan bo'lsa):
+- Rasmdagi sham shakli va chiziqlarni sham jadvali bilan solishtir; ikkisi ziddiyatda bo'lsa \
+  jadvaldagi raqamlarga ishon (rasmdan narxni aniq o'qish ishonchsiz).
+- Yuqori timeframe trendiga qarshi signal bermaslikka harakat qil; qarshi bo'lsa ishonchni pasaytir.
+- ADX 20 dan past (yon bozor) bo'lsa, narx range chetida bo'lmasa HOLD ber -- yon bozorda \
+  trend signallari ko'pincha yolg'on chiqadi.
+- Swing struktura (HH/HL yoki LH/LL) trend yo'nalishini tasdiqlamasa, ishonchni pasaytir.
+- Ishonch (confidence)ni halol ber: shubha bo'lsa 0.5 atrofida, faqat bir nechta mustaqil \
+  omil (rasm + indikator + struktura + yuqori TF) bir yo'nalishni ko'rsatsa 0.7 dan yuqori.
+
 Agar JONLI MA'LUMOT berilmagan bo'lsa, rasmda narx o'qi ko'rinsa taxminiy son ber, \
 ko'rinmasa null qo'y.
 
@@ -48,7 +58,46 @@ narx orqaga qaytishini kutib pastroq/yuqoriroq narxdan kirish yaxshiroq, "wait_b
 muhim darajani buzib o'tishini kutib kirish yaxshiroq."""
 
 
+PROMPT_VERSION = "v2-structure"  # baholashda eski/yangi promptni solishtirish uchun
+
+
+def _format_extra_context(ctx: dict) -> str:
+    """Rasmda ko'rinadigan, lekin raqam sifatida aniqroq bo'lgan ma'lumotlar:
+    sham jadvali, swing struktura, yuqori timeframe trendi."""
+    parts = []
+
+    candles = ctx.get("candles")
+    if candles:
+        rows = "\n".join(
+            f"  {i - len(candles) + 1:>3}: O {o} H {h} L {l} C {c} vol {v}"
+            for i, (o, h, l, c, v) in enumerate(candles)
+        )
+        parts.append(f"Oxirgi {len(candles)} sham (eski -> yangi, 0 = oxirgi bar):\n{rows}")
+
+    swings = ctx.get("swings") or {}
+    if swings.get("swing_highs") or swings.get("swing_lows"):
+        sh = ", ".join(f"{p} ({b} bar oldin)" for b, p in swings.get("swing_highs", []))
+        sl = ", ".join(f"{p} ({b} bar oldin)" for b, p in swings.get("swing_lows", []))
+        parts.append(
+            f"Swing nuqtalar (yangisi birinchi): high: {sh or '-'}; low: {sl or '-'}\n"
+            f"Struktura: {swings.get('structure') or 'aniqlanmadi'}"
+        )
+
+    higher = ctx.get("higher_tf") or {}
+    if higher:
+        lines = [f"  {tf}: trend {s['direction']}, ADX {s['adx']}, RSI {s['rsi']}" for tf, s in higher.items()]
+        parts.append("Yuqori timeframe trendi:\n" + "\n".join(lines))
+
+    return "\n".join(parts)
+
+
 def _format_context(ctx: dict) -> str:
+    base = _format_base_context(ctx)
+    extra = _format_extra_context(ctx)
+    return f"{base}\n{extra}" if extra else base
+
+
+def _format_base_context(ctx: dict) -> str:
     return (
         f"JONLI MA'LUMOT ({ctx['symbol']}, {ctx['timeframe']}):\n"
         f"- Bid/Ask: {ctx['bid']} / {ctx['ask']}\n"
@@ -77,6 +126,7 @@ def analyze_image(image_bytes: bytes, media_type: str = "image/png", market_cont
         config=types.GenerateContentConfig(
             system_instruction=_SYSTEM_PROMPT,
             response_mime_type="application/json",
+            temperature=0.0,  # bir xil kirishda bir xil javob -- natijalar takrorlanuvchan bo'lsin
         ),
     )
 
@@ -84,6 +134,7 @@ def analyze_image(image_bytes: bytes, media_type: str = "image/png", market_cont
 
     return {
         "source": "gemini",
+        "prompt_version": PROMPT_VERSION,
         "signal": parsed.get("signal", "Hold"),
         "confidence": float(parsed.get("confidence", 0.5)),
         "trend": parsed.get("trend", ""),

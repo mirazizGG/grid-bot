@@ -202,6 +202,55 @@ def to_feature_vector(raw: dict) -> list[float]:
     ]
 
 
+N_CONTEXT_CANDLES = 20
+SWING_K = 3  # swing nuqta: har ikki tomonida K ta bardan balandroq/pastroq
+# joriy timeframe'dan yuqori timeframe'lar (Gemini'ga katta rasm kontekstini beradi)
+HIGHER_TIMEFRAMES = {
+    "M1": ["M15", "H1"], "M5": ["M15", "H1"], "M15": ["H1", "H4"], "M30": ["H1", "H4"],
+    "H1": ["H4", "D1"], "H4": ["D1"], "D1": [],
+}
+
+
+def find_swings(highs: np.ndarray, lows: np.ndarray, k: int = SWING_K) -> dict:
+    """Oxirgi 2 ta swing high va 2 ta swing low (eng yangisi birinchi) va struktura
+    (HH/HL = yuqoriga, LH/LL = pastga) ni topadi. Oxirgi k bar tasdiqlanmagan,
+    shuning uchun hisobga olinmaydi."""
+    n = len(highs)
+    swing_highs, swing_lows = [], []
+    for i in range(n - k - 1, k - 1, -1):
+        if highs[i] == highs[i - k:i + k + 1].max() and len(swing_highs) < 2:
+            swing_highs.append((n - 1 - i, round(float(highs[i]), 5)))  # (necha bar oldin, narx)
+        if lows[i] == lows[i - k:i + k + 1].min() and len(swing_lows) < 2:
+            swing_lows.append((n - 1 - i, round(float(lows[i]), 5)))
+        if len(swing_highs) == 2 and len(swing_lows) == 2:
+            break
+
+    structure = None
+    if len(swing_highs) == 2 and len(swing_lows) == 2:
+        hh = swing_highs[0][1] > swing_highs[1][1]
+        hl = swing_lows[0][1] > swing_lows[1][1]
+        if hh and hl:
+            structure = "HH/HL (yuqoriga struktura)"
+        elif not hh and not hl:
+            structure = "LH/LL (pastga struktura)"
+        else:
+            structure = "aralash (HH/LL yoki LH/HL) -- aniq struktura yo'q"
+    return {"swing_highs": swing_highs, "swing_lows": swing_lows, "structure": structure}
+
+
+def trend_summary(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray) -> dict | None:
+    """Yuqori timeframe uchun qisqa trend xulosasi."""
+    if len(closes) < 55:
+        return None
+    sma20, sma50 = _sma(closes, 20), _sma(closes, 50)
+    adx = _adx(highs, lows, closes, 14)
+    if adx < 20:
+        direction = "yon (trend yo'q)"
+    else:
+        direction = "yuqoriga" if sma20 > sma50 and closes[-1] > sma20 else "pastga" if sma20 < sma50 and closes[-1] < sma20 else "noaniq"
+    return {"direction": direction, "adx": round(adx, 1), "rsi": round(_rsi(closes, 14), 1)}
+
+
 def _server_utc_offset_hours(tick_time: int) -> int | None:
     """Broker server vaqtining UTC'dan farqi (soat). Tick yangi bo'lmasa
     (bozor yopiq) ishonchli aniqlab bo'lmaydi -- None qaytaradi."""
@@ -244,6 +293,25 @@ def get_context(symbol: str, timeframe_name: str, n_bars: int = 100) -> dict | N
             "bar_time": int(rates["time"][-1]),  # oxirgi bar ochilgan vaqt (broker server vaqti, epoch)
             "server_utc_offset_hours": _server_utc_offset_hours(tick.time),
         })
+
+        # Faqat Gemini uchun qo'shimcha kontekst (custom model xususiyatlariga kirmaydi --
+        # train/serve parity buzilmasligi uchun compute_raw_indicators'ga qo'shilmagan)
+        n = N_CONTEXT_CANDLES
+        raw["candles"] = [
+            [round(float(o), 5), round(float(h), 5), round(float(l), 5), round(float(c), 5), int(v)]
+            for o, h, l, c, v in zip(rates["open"][-n:], rates["high"][-n:], rates["low"][-n:],
+                                     rates["close"][-n:], rates["tick_volume"][-n:])
+        ]
+        raw["swings"] = find_swings(highs, lows)
+        higher = {}
+        for tf_name in HIGHER_TIMEFRAMES.get(timeframe_name, []):
+            hr = mt5.copy_rates_from_pos(symbol, TIMEFRAME_MAP[tf_name], 0, n_bars)
+            if hr is not None and len(hr) >= 55:
+                summary = trend_summary(hr["high"].astype(np.float64), hr["low"].astype(np.float64),
+                                        hr["close"].astype(np.float64))
+                if summary:
+                    higher[tf_name] = summary
+        raw["higher_tf"] = higher
         return raw
     finally:
         mt5.shutdown()
