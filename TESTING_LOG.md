@@ -128,6 +128,24 @@ deb belgilanadi va haftalik xulosaga kiritilmaydi.
   alohida ko'rib chiqilishi kerak (hozircha 55% chegara mantiqan to'g'ri
   ishlab turibdi -- oldingi holat buni tasdiqladi).
 
+## Avtomatik baholash (2026-10-05 dan)
+
+`training/evaluate_signals.py` bazadagi (`backend/analyses.db`) signallarni MT5
+tarixi bilan solishtiradi (TP/SL birinchi urilgani, 1 daqiqalik barlar, 24 soat
+oyna). Hold qilinganlar uchun Gemini yo'nalishi bo'yicha gipotetik natija ham
+hisoblanadi -- shu bilan 55% filtri foyda berayotganini tekshirish mumkin.
+
+Ishga tushirish (MT5 terminali ochiq va hisobga kirilgan bo'lishi kerak;
+`analyses.db` shu kompyuterda bo'lishi kerak -- u git'da yo'q):
+
+    python training/evaluate_signals.py
+    python training/evaluate_signals.py --utc-offset 3   # bozor yopiq bo'lsa
+
+Holat: skript yozildi, lekin MT5 bo'lmagani uchun **hali haqiqiy ma'lumotda
+ishga tushirilmagan** (faqat simulate() mantig'i tekshirilgan). Bazada 17 ta
+tahlil bor (6 Buy, 11 Hold) -- namuna juda kichik, 30-50 ta baholangan signal
+yig'ilguncha xulosa qilmaslik kerak.
+
 ## Haftalik xulosa (1 hafta to'lgach shu yerga yoziladi)
 
 _(hali to'ldirilmagan)_
