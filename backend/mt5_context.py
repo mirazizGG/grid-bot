@@ -7,6 +7,8 @@ indikatorlardan xulosa chiqaradi.
 o'qitilganda (training/train_numeric_model.py) ham, ishlatilganda (bu yerda,
 jonli) ham AYNAN bir xil ishlatiladi -- train/serve orasida farq bo'lmasligi
 uchun bu muhim."""
+import time
+
 import numpy as np
 import pandas as pd
 
@@ -200,6 +202,16 @@ def to_feature_vector(raw: dict) -> list[float]:
     ]
 
 
+def _server_utc_offset_hours(tick_time: int) -> int | None:
+    """Broker server vaqtining UTC'dan farqi (soat). Tick yangi bo'lmasa
+    (bozor yopiq) ishonchli aniqlab bo'lmaydi -- None qaytaradi."""
+    delta = tick_time - time.time()
+    offset = round(delta / 3600)
+    if abs(delta - offset * 3600) > 600 or abs(offset) > 14:
+        return None
+    return offset
+
+
 def get_context(symbol: str, timeframe_name: str, n_bars: int = 100) -> dict | None:
     """MT5'dan jonli narx + indikatorlarni oladi. MT5 mavjud bo'lmasa yoki
     symbol topilmasa None qaytaradi -- chaqiruvchi shunda eski (rasmdan
@@ -229,6 +241,8 @@ def get_context(symbol: str, timeframe_name: str, n_bars: int = 100) -> dict | N
             "timeframe": timeframe_name,
             "bid": float(tick.bid),
             "ask": float(tick.ask),
+            "bar_time": int(rates["time"][-1]),  # oxirgi bar ochilgan vaqt (broker server vaqti, epoch)
+            "server_utc_offset_hours": _server_utc_offset_hours(tick.time),
         })
         return raw
     finally:

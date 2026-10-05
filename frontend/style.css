@@ -586,3 +586,27 @@ button.primary:disabled {
   .sidebar-footer { display: none; }
   .main { padding: 20px 16px 48px; }
 }
+
+/* ---------- Ogohlantirish va baholash natijalari ---------- */
+
+.warn-box {
+  margin-top: 14px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: var(--hold-bg);
+  color: var(--hold);
+  border: 1px solid var(--hold);
+  font-size: 0.83rem;
+}
+
+.outcome-tp { color: var(--buy); font-weight: 600; }
+.outcome-sl { color: var(--sell); font-weight: 600; }
+.outcome-muted { color: var(--text-muted); }
+.outcome-hint { color: var(--text-muted); font-size: 0.75rem; }
+
+.eval-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+.eval-actions { margin-top: 14px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }

@@ -34,6 +34,12 @@ class Analysis(Base):
 
     raw_result = Column(Text)  # to'liq consensus natijasi JSON sifatida
 
+    # evaluator.py to'ldiradi. outcome: TP / SL / OPEN / EXPIRED / SKIP / NO_DATA / None (hali tekshirilmagan)
+    # outcome_kind: "signal" (haqiqiy Buy/Sell) yoki "hold-gipotetik" (Hold, Gemini yo'nalishi bo'yicha)
+    outcome = Column(String, nullable=True)
+    outcome_kind = Column(String, nullable=True)
+    outcome_checked_at = Column(DateTime, nullable=True)
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -49,11 +55,25 @@ class Analysis(Base):
             "entry_price": self.entry_price,
             "tp_price": self.tp_price,
             "sl_price": self.sl_price,
+            "outcome": self.outcome,
+            "outcome_kind": self.outcome_kind,
             "detail": json.loads(self.raw_result),
         }
 
 
+def _add_missing_columns():
+    """create_all() mavjud jadvalga yangi ustun qo'shmaydi -- eski bazani buzmasdan qo'shamiz."""
+    with engine.begin() as conn:
+        existing = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(analyses)")}
+        for col in ("outcome", "outcome_kind"):
+            if col not in existing:
+                conn.exec_driver_sql(f"ALTER TABLE analyses ADD COLUMN {col} VARCHAR")
+        if "outcome_checked_at" not in existing:
+            conn.exec_driver_sql("ALTER TABLE analyses ADD COLUMN outcome_checked_at DATETIME")
+
+
 Base.metadata.create_all(engine)
+_add_missing_columns()
 
 
 def save_analysis(image_path: str, consensus: dict) -> Analysis:

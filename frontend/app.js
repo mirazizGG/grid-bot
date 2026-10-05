@@ -81,6 +81,8 @@ analyzeBtn.addEventListener("click", async () => {
   formData.append("file", selectedFile);
   formData.append("symbol", currentSymbol() || "XAUUSD");
   formData.append("timeframe", timeframeSelect.value);
+  // Fayl yaratilgan vaqt -- backend eski skrinshotni aniqlashi uchun (clipboard'dan qo'yilganda 0 bo'lishi mumkin)
+  if (selectedFile.lastModified) formData.append("file_modified_ms", selectedFile.lastModified);
 
   try {
     const res = await fetch(`${API_BASE}/analyze`, { method: "POST", body: formData });
@@ -149,6 +151,7 @@ function renderResult(data) {
     </div>
 
     <div class="note-box">${d.agreement ? "✓ " : "⚠ "}${escapeHtml(d.note)}</div>
+    ${(d.warnings || []).map((w) => `<div class="warn-box">⚠ ${escapeHtml(w)}</div>`).join("")}
   `;
 }
 
@@ -195,6 +198,52 @@ function escapeHtml(str) {
 
 // ---------- Dashboard ----------
 
+function outcomeCell(row) {
+  const o = row.outcome;
+  const hypo = row.outcome_kind === "hold-gipotetik";
+  if (!o) return `<span class="outcome-muted">hali tekshirilmagan</span>`;
+  if (o === "SKIP") return `<span class="outcome-muted">—</span>`;
+  const labels = { TP: "✓ TP", SL: "✗ SL", OPEN: "ochiq", EXPIRED: "urilmadi", NO_DATA: "ma'lumot yo'q" };
+  const cls = o === "TP" ? "outcome-tp" : o === "SL" ? "outcome-sl" : "outcome-muted";
+  const hint = hypo ? `<div class="outcome-hint">agar ${escapeHtml(row.detail.vision_ai.signal)} berilganida</div>` : "";
+  return `<span class="${cls}">${labels[o] || o}</span>${hint}`;
+}
+
+function evalTile(title, s) {
+  if (!s || s.n === 0) {
+    return `<div class="stat-tile"><div class="label">${title}</div><div class="value">—</div>
+      <div class="outcome-hint">baholangan savdo yo'q${s && s.open ? ` · ochiq: ${s.open}` : ""}</div></div>`;
+  }
+  const sign = s.avg_r >= 0 ? "+" : "";
+  return `<div class="stat-tile"><div class="label">${title}</div>
+    <div class="value">${(s.win_rate * 100).toFixed(0)}%</div>
+    <div class="outcome-hint">n=${s.n} · TP ${s.tp} / SL ${s.sl} · ${sign}${s.avg_r.toFixed(2)}R/savdo</div></div>`;
+}
+
+function renderEvaluation(ev) {
+  document.getElementById("eval-tiles").innerHTML =
+    evalTile("Berilgan signallar (win-rate)", ev.signal) +
+    evalTile("Hold bo'lsa-da (gipotetik)", ev["hold-gipotetik"]);
+}
+
+document.getElementById("eval-btn").addEventListener("click", async () => {
+  const btn = document.getElementById("eval-btn");
+  const status = document.getElementById("eval-status");
+  btn.disabled = true;
+  status.textContent = "Tekshirilmoqda...";
+  try {
+    const res = await fetch(`${API_BASE}/evaluate`, { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Noma'lum xato");
+    status.textContent = `Tekshirildi: ${data.checked} ta`;
+    await loadDashboard();
+  } catch (err) {
+    status.textContent = `Xato: ${err.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 async function loadDashboard() {
   const statsTiles = document.getElementById("stats-tiles");
   const barChart = document.getElementById("bar-chart");
@@ -215,6 +264,8 @@ async function loadDashboard() {
     <div class="stat-tile"><div class="label">Buy</div><div class="value">${stats.by_signal.Buy || 0}</div></div>
     <div class="stat-tile"><div class="label">Sell</div><div class="value">${stats.by_signal.Sell || 0}</div></div>
   `;
+
+  renderEvaluation(stats.evaluation);
 
   const maxCount = Math.max(1, ...Object.values(stats.by_signal));
   barChart.innerHTML = ["Buy", "Sell", "Hold"]
@@ -243,7 +294,7 @@ async function loadDashboard() {
   historyContainer.innerHTML = `
     <table class="history-table">
       <thead>
-        <tr><th>Rasm</th><th>Vaqt</th><th>Signal</th><th>Ishonch</th><th>Kelishuv</th></tr>
+        <tr><th>Rasm</th><th>Vaqt</th><th>Signal</th><th>Ishonch</th><th>Kelishuv</th><th>Natija</th></tr>
       </thead>
       <tbody>
         ${history
@@ -255,6 +306,7 @@ async function loadDashboard() {
             <td><span class="badge ${row.final_signal}">${signalLabel(row.final_signal)}</span></td>
             <td>${(row.final_confidence * 100).toFixed(0)}%</td>
             <td>${row.agreement ? "<span class=\"agree-yes\">✓ mos</span>" : "<span class=\"agree-no\">— farqli</span>"}</td>
+            <td>${outcomeCell(row)}</td>
           </tr>`
           )
           .join("")}

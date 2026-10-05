@@ -1,6 +1,7 @@
 """FastAPI backend: chart rasmini custom model + Gemini vision bilan tahlil qilib,
 yakuniy Buy/Sell/Hold + TP/SL signalini beradi va tarixni saqlaydi."""
 import os
+import time
 import uuid
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
@@ -10,6 +11,7 @@ from PIL import Image
 import io
 
 import custom_model
+import evaluator
 import gemini_vision
 import mt5_context
 from consensus import compute_consensus
@@ -31,12 +33,31 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
 
+TIMEFRAME_MINUTES = {"M1": 1, "M5": 5, "M15": 15, "M30": 30, "H1": 60, "H4": 240, "D1": 1440}
+MIN_STALE_IMAGE_MINUTES = 10  # rasm shundan (va timeframe bir bar vaqtidan) eski bo'lsa ogohlantiramiz
+
+
+def _image_age_minutes(file_modified_ms: float | None) -> float | None:
+    if not file_modified_ms:
+        return None  # vaqt noma'lum (masalan clipboard'dan qo'yilgan rasm)
+    age = (time.time() * 1000 - file_modified_ms) / 60000
+    return max(age, 0.0)
+
+
+def _fmt_age(minutes: float) -> str:
+    if minutes < 90:
+        return f"{minutes:.0f} daqiqa"
+    if minutes < 48 * 60:
+        return f"{minutes / 60:.1f} soat"
+    return f"{minutes / 1440:.0f} kun"
+
 
 @app.post("/analyze")
 async def analyze(
     file: UploadFile = File(...),
     symbol: str = Form("XAUUSD"),
     timeframe: str = Form("M15"),
+    file_modified_ms: float | None = Form(None),  # brauzerdagi File.lastModified (ms, UTC epoch)
 ):
     if file.content_type not in ("image/png", "image/jpeg", "image/jpg", "image/webp"):
         raise HTTPException(400, f"Qo'llab-quvvatlanmaydigan fayl turi: {file.content_type}")
@@ -75,6 +96,18 @@ async def analyze(
         consensus["price_source"] = "vision_estimate"
     consensus["market_context"] = market_ctx
 
+    warnings = []
+    age_min = _image_age_minutes(file_modified_ms)
+    if age_min is not None:
+        consensus["image_age_minutes"] = round(age_min, 1)
+        tf_min = TIMEFRAME_MINUTES.get(timeframe.strip().upper(), 15)
+        if age_min > max(MIN_STALE_IMAGE_MINUTES, tf_min):
+            warnings.append(
+                f"Rasm {_fmt_age(age_min)} oldin olingan, narx/indikatorlar esa hozirgi. Natija "
+                "ishonchsiz bo'lishi mumkin -- MT5'da yangi skrinshot oling."
+            )
+    consensus["warnings"] = warnings
+
     record = save_analysis(f"/uploads/{filename}", consensus)
 
     return record.to_dict()
@@ -112,9 +145,19 @@ def stats():
             "total": total,
             "by_signal": by_signal,
             "agreement_rate": round(agreement_count / total, 3) if total else 0,
+            "evaluation": evaluator.summarize(session),
         }
     finally:
         session.close()
+
+
+@app.post("/evaluate")
+def evaluate(horizon_hours: float = evaluator.DEFAULT_HORIZON_HOURS, utc_offset: int | None = None):
+    """Hali baholanmagan signallarni MT5 tarixi bilan solishtiradi (MT5 ochiq bo'lishi kerak)."""
+    try:
+        return evaluator.evaluate_pending(horizon_hours, utc_offset)
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc))
 
 
 @app.get("/health")
