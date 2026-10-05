@@ -118,7 +118,7 @@ function renderResult(data) {
     <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
       <span class="badge ${d.final_signal}">${signalLabel(d.final_signal)}</span>
       <span style="color:var(--text-muted); font-size:0.85rem;">
-        Ishonch: ${(d.final_confidence * 100).toFixed(0)}% ${d.agreement ? "· ikkala model kelishdi" : "· kelishmovchilik bor"}
+        ${d.final_confidence == null ? "" : `Ishonch: ${(d.final_confidence * 100).toFixed(0)}%`} ${d.agreement ? "· ikkala model kelishdi" : "· kelishmovchilik bor"}
       </span>
     </div>
 
@@ -304,7 +304,7 @@ async function loadDashboard() {
             <td><img class="thumb" src="${row.image_path}" alt=""></td>
             <td class="mono">${new Date(row.timestamp).toLocaleString("uz-UZ")}</td>
             <td><span class="badge ${row.final_signal}">${signalLabel(row.final_signal)}</span></td>
-            <td>${(row.final_confidence * 100).toFixed(0)}%</td>
+            <td>${row.final_confidence == null ? "—" : (row.final_confidence * 100).toFixed(0) + "%"}</td>
             <td>${row.agreement ? "<span class=\"agree-yes\">✓ mos</span>" : "<span class=\"agree-no\">— farqli</span>"}</td>
             <td>${outcomeCell(row)}</td>
           </tr>`

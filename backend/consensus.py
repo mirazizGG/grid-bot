@@ -61,7 +61,7 @@ def compute_consensus(custom: dict, vision_ai: dict) -> dict:
     if agreement:
         final_confidence = VISION_AI_WEIGHT * vision_ai["confidence"] + CUSTOM_MODEL_WEIGHT * custom["confidence"]
     elif final_signal == "Hold":
-        final_confidence = 0.5
+        final_confidence = None  # Hold uchun ishonch ma'nosiz (avval qattiq 0.5 edi) -- dashboard "—" ko'rsatadi
     else:
         final_confidence = vision_ai["confidence"] * 0.85  # kelishmagan, lekin Gemini ishonchi yuqori bo'lgani uchun kamroq pasaytiramiz
 
@@ -73,7 +73,7 @@ def compute_consensus(custom: dict, vision_ai: dict) -> dict:
 
     return {
         "final_signal": final_signal,
-        "final_confidence": round(final_confidence, 3),
+        "final_confidence": round(final_confidence, 3) if final_confidence is not None else None,
         "agreement": agreement,
         "note": note,
         "entry_price": entry_price,
