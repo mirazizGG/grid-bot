@@ -66,7 +66,7 @@ GEMINI_API_KEY=sizning_kalitingiz
 
 ### Ishga tushirish
 
-MT5 terminali ochiq va hisobga kirilgan bo'lishi kerak (jonli narx/RSI/MACD olish uchun — bo'lmasa ham ishlaydi, lekin Gemini faqat rasmga qarab taxmin qiladi).
+MT5 terminali ochiq va hisobga kirilgan bo'lishi kerak. U ulanmagan bo'lsa Gemini rasmni tahlil qiladi, lekin yakuniy signal Hold bo'ladi.
 
 ```powershell
 cd backend
@@ -96,6 +96,34 @@ qayta o'qitish shart emas. Agar qayta o'qitmoqchi bo'lsangiz:
 2. Backend MT5'dan shu symbol uchun jonli narx, RSI, MACD, ATR, SMA, Bollinger %B oladi.
 3. **Custom model** — shu raqamli ko'rsatkichlarga qarab (rasmni ko'rmaydi) Buy/Sell/Hold aytadi.
 4. **Gemini** — rasmni + shu raqamli ko'rsatkichlarni birga ko'rib, mustaqil xulosa chiqaradi.
-5. Ikkalasi kelishsa — yuqori ishonchli signal, TP/SL ATR asosida aniq hisoblanadi.
-   Kelishmasa — xavfsizlik uchun **Hold**.
+5. Ikkalasi kelishsa va custom ishonchi yetarli bo'lsa signal beriladi. Qarama-qarshi
+   yo'nalishda Gemini bahosi 65% yoki yuqori bo'lsa, Gemini yo'nalishi olinadi;
+   custom Hold bo'lsa ham Gemini yo'nalishi olinishi mumkin. MT5 konteksti yo'q
+   bo'lsa yakuniy qaror **Hold**. TP/SL joriy MT5 narxi va ATR asosida hisoblanadi.
 6. Natija tarixga saqlanadi, Dashboard'da ko'rinadi.
+
+Qo'shimcha ravishda Ollama orqali mahalliy **Qwen 3.5 4B** rasm va ayni MT5
+kontekstini tahlil qiladi. Uning xulosasi taqqoslash uchun va yakuniy signalga
+ta'sir qilmaydi. Ollama ishlayotgan va `ollama pull qwen3.5:4b` bajarilgan
+bo'lishi kerak. Model ishlamasa, uning xatosi ko'rsatiladi va Gemini tahlili
+davom etadi. `.env` orqali `QWEN_MODEL`, `OLLAMA_URL`, `QWEN_TIMEOUT` sozlanadi.
+
+Dashboarddagi Gemini/Qwen natijalari alohida **gipotetik** taqqoslashdir: har
+bir yo'nalish uchun bir xil saqlangan MT5 narxi, ATR va 24 soatlik muddat
+ishlatiladi. Qwen faqat yo'nalish beradi, shuning uchun unda darhol kirish
+faraz qilinadi; Gemini kutishni aytganda uning rejasi hisoblanmaydi. Ochiq,
+ma'lumotsiz va baholanmagan holatlar TP ulushiga kirmaydi. Modellar namunalari
+soni farq qilishi mumkin. Eski tahlillar qayta tahlil qilinmaydi va ular uchun
+yangi gipotetik rejalar to'qib yaratilmaydi.
+
+Baholash odatda 24 soat davomida birinchi qisman daqiqadagi ticklarni va keyingi
+to'liq 1 daqiqalik shamlarni tekshiradi. Tick yoki bar tarixida bo'shliq bo'lsa
+natija ma'lumotsiz qolishi mumkin. Spread va komissiya to'liq hisoblanmaydi.
+Eski usulda baholangan natijalar tarixda saqlanadi, yangi statistikaga qo'shilmaydi.
+Model bahosi haqiqiy savdo muvaffaqiyati ehtimoli sifatida tasdiqlanmagan.
+
+Tahlil oxirida narx yangiligi qayta tekshiriladi. Kotirovka 60 soniyadan eski,
+narx tahlil davomida 0.25 ATR dan ko'p o'zgargan yoki Gemini kirishni kutishni
+aytgan bo'lsa Hold qaytariladi. Kutish sharti bajarilganda qayta tahlil qiling.
+Windows kirishida avtomatik ishga tushirish faqat foydalanuvchi tizimga kirganda
+ishlaydi; MT5 ochiq va hisobga ulangan bo'lishi alohida talab qilinadi.

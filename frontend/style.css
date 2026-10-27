@@ -340,6 +340,7 @@ nav.side-nav button.active {
   border-radius: 10px;
   padding: 16px;
 }
+.source-card.custom-card { order: 3; }
 .source-card h3 {
   display: flex;
   align-items: center;
@@ -359,6 +360,8 @@ nav.side-nav button.active {
 }
 .source-dot.custom { background: var(--accent); }
 .source-dot.gemini { background: #9085e9; }
+.source-dot.qwen { background: #32c8bf; }
+.source-card .qwen-error { color: var(--hold); }
 .source-card p {
   margin: 8px 0 0;
   font-size: 0.84rem;
@@ -610,3 +613,50 @@ button.primary:disabled {
   gap: 12px;
 }
 .eval-actions { margin-top: 14px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+/* Dashboard va tahlilning aniqroq ko'rinishi */
+:root { --bg: #080e16; --surface-1: #101b29; --surface-2: #162536; --accent: #62aaff; --text-muted: #9aaec1; --border: rgba(172, 202, 230, .12); }
+body { background: radial-gradient(ellipse at 72% 0%, #142b42 0, var(--bg) 50%); }
+.sidebar { background: #0c1622; }
+.brand-icon { background: linear-gradient(145deg, #68adff, #3a6be2); box-shadow: 0 6px 22px #3789ed3b; }
+.main { max-width: 1240px; padding: 38px 42px 70px; }
+.page-header { margin-bottom: 26px; }
+.page-header h2 { font-size: 1.7rem; letter-spacing: -.035em; }
+.page-header p { margin-top: 8px; color: var(--text-secondary); line-height: 1.55; }
+.card { border-radius: 16px; padding: 24px; box-shadow: 0 14px 35px #0002; }
+.card-title { font-size: 1rem; margin-bottom: 7px; }
+.section-description { margin: 0 0 18px; color: var(--text-secondary); font-size: .8rem; line-height: 1.5; }
+.stats-row { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.stats-row .stat-tile, .eval-grid .stat-tile { border-radius: 12px; padding: 18px; }
+.stats-row .stat-tile .value { font-size: 1.8rem; margin-top: 9px; }
+.eval-grid .outcome-hint { margin-top: 8px; line-height: 1.65; }
+.confirm-chart { display: flex; align-items: flex-start; gap: 10px; margin: 16px 0 0; padding: 13px 15px; border-radius: 10px; background: #1d3042; color: #d5e4f2; font-size: .82rem; line-height: 1.5; cursor: pointer; }
+.confirm-chart input { width: 17px; height: 17px; accent-color: var(--accent); flex-shrink: 0; }
+.result-heading { display: flex; justify-content: space-between; align-items: center; gap: 15px; flex-wrap: wrap; }
+.eyebrow { color: var(--text-muted); font-size: .68rem; letter-spacing: .1em; font-weight: 700; margin-bottom: 9px; }
+.result-meta { color: var(--text-secondary); text-align: right; font-size: .82rem; line-height: 1.7; }
+.service-status { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 22px; color: var(--text-secondary); font-size: .75rem; }
+.service-item { padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-1); }
+.service-item::before { content: '●'; color: var(--hold); margin-right: 6px; }
+.service-item.ok::before { color: var(--buy); }
+.comparison-box { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-top: 20px; padding: 13px 15px; background: #1a3044; border: 1px solid #4a7b9e66; border-radius: 10px; font-size: .83rem; }
+.comparison-box span { color: var(--text-secondary); }
+.history-open, #history-close { border: 1px solid var(--border); border-radius: 8px; padding: 7px 11px; background: var(--surface-2); color: var(--text-primary); cursor: pointer; }
+.history-open:hover, #history-close:hover { border-color: var(--accent); }
+.history-dialog { width: min(980px, calc(100% - 24px)); max-height: 90vh; border: 1px solid var(--border); border-radius: 16px; padding: 24px; color: var(--text-primary); background: var(--surface-1); }
+.history-dialog::backdrop { background: #02070bd9; }
+.dialog-heading { display: flex; justify-content: space-between; align-items: center; gap: 15px; }
+.dialog-heading h2 { margin: 0 0 12px; font-size: 1.25rem; }
+.history-image { display: block; max-width: 100%; max-height: 350px; object-fit: contain; margin: 0 auto 20px; border-radius: 8px; }
+.history-dialog .source-cards { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+.table-scroll { overflow-x: auto; }
+.history-table { min-width: 670px; }
+.outcome-hint { color: #a4b5c6; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (max-width: 760px) {
+  .main { padding: 24px 16px 48px; }
+  .stats-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sidebar { flex-wrap: wrap; }
+  .page-header h2 { font-size: 1.4rem; }
+  .card { padding: 18px; }
+}

@@ -1,5 +1,6 @@
 """Gemini API (vision) orqali chart rasmini mustaqil tahlil qilish."""
 import json
+import math
 
 from google import genai
 from google.genai import types
@@ -131,12 +132,19 @@ def analyze_image(image_bytes: bytes, media_type: str = "image/png", market_cont
     )
 
     parsed = json.loads(response.text)
+    signal = parsed.get("signal")
+    try:
+        confidence = float(parsed["confidence"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("Gemini javobida ishonch qiymati noto'g'ri") from exc
+    if signal not in ("Buy", "Sell", "Hold") or not math.isfinite(confidence) or not 0 <= confidence <= 1:
+        raise ValueError("Gemini javobida signal yoki ishonch qiymati noto'g'ri")
 
     return {
         "source": "gemini",
         "prompt_version": PROMPT_VERSION,
-        "signal": parsed.get("signal", "Hold"),
-        "confidence": float(parsed.get("confidence", 0.5)),
+        "signal": signal,
+        "confidence": confidence,
         "trend": parsed.get("trend", ""),
         "reasoning": parsed.get("reasoning", ""),
         "entry_type": parsed.get("entry_type"),

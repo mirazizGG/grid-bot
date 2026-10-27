@@ -4,9 +4,8 @@ win-rate va expectancy berishini hisoblaydi.
 
 Eslatma: bu FAQAT custom model'ni backtest qiladi (Gemini'ni tarixiy
 ravishda minglab so'rov bilan qayta ishga tushirish amaliy emas -- API
-xarajati va vaqt talab qiladi). Haqiqiy deploy qilingan tizim (custom
-model + Gemini) buni kelishgan holatlarda kuchaytiradi, shuning uchun bu
-yerdagi natijalar "pastki chegara" hisoblanadi.
+xarajati va vaqt talab qiladi). Bu natijalar yakuniy custom + Gemini
+tizimining ishlashini yoki foydasini tasdiqlamaydi.
 """
 import os
 import sys

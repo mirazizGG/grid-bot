@@ -14,9 +14,11 @@ analysts** over it and merges their verdicts:
    same live indicator context, and reasons about trend, support/resistance and
    candle patterns.
 
-When both agree → a higher-confidence **Buy / Sell / Hold** signal with
-ATR-based Entry / TP / SL levels and a written rationale. When they disagree →
-**Hold**, by design. Every run is stored and shown on a history dashboard.
+When both agree and the numeric model passes its confidence threshold, a
+directional signal can be given. Gemini can also override an opposing numeric
+signal at 65% confidence, or provide direction when the numeric model says Hold.
+When MT5 context is unavailable, the final signal is Hold. Every run is stored
+and shown on a history dashboard; model confidence is not a calibrated win probability.
 
 ## Why it's built this way
 
@@ -78,8 +80,10 @@ python -m uvicorn main:app --host 127.0.0.1 --port 8811
 ```
 
 Open **http://127.0.0.1:8811**. MT5 running and logged in is recommended (for
-live indicators) but not required — without it Gemini falls back to the image
-alone.
+live indicators). Without MT5, Gemini can still analyze the image, but the final
+signal is Hold. Outcome evaluation uses ticks for the first partial minute and
+complete UTC M1 candles afterwards; gaps are reported as missing data. Costs are not fully modeled.
+Older evaluation results remain in history but are excluded from the new statistics.
 
 ### Moving history between machines
 

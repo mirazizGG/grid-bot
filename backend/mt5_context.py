@@ -8,6 +8,8 @@ o'qitilganda (training/train_numeric_model.py) ham, ishlatilganda (bu yerda,
 jonli) ham AYNAN bir xil ishlatiladi -- train/serve orasida farq bo'lmasligi
 uchun bu muhim."""
 import time
+import threading
+import math
 
 import numpy as np
 import pandas as pd
@@ -18,6 +20,7 @@ except ImportError:
     mt5 = None
 
 TIMEFRAME_MAP = {}
+MT5_LOCK = threading.RLock()
 if mt5 is not None:
     TIMEFRAME_MAP = {
         "M1": mt5.TIMEFRAME_M1,
@@ -30,6 +33,7 @@ if mt5 is not None:
     }
 
 ATR_PERIOD = 14
+MAX_QUOTE_AGE_SECONDS = 60
 # training/backtest.py orqali tekshirilgan: 2:1 nisbat (ishonch>=0.55 bilan
 # birga) out-of-sample'da eng barqaror ijobiy expectancy berdi (+0.095R/savdo).
 TP_ATR_MULT = 2.0
@@ -262,6 +266,38 @@ def _server_utc_offset_hours(tick_time: int) -> int | None:
 
 
 def get_context(symbol: str, timeframe_name: str, n_bars: int = 100) -> dict | None:
+    with MT5_LOCK:
+        return _get_context(symbol, timeframe_name, n_bars)
+
+
+def _checked_quote(tick, info) -> dict | None:
+    if tick is None or info is None:
+        return None
+    tick_msc = getattr(tick, "time_msc", 0)
+    bid, ask = float(tick.bid), float(tick.ask)
+    tick_time = float(tick_msc) / 1000 if tick_msc else float(tick.time)
+    age = time.time() - tick_time
+    if (not all(math.isfinite(x) for x in (bid, ask, tick_time)) or
+            bid <= 0 or ask < bid or age < -5 or age > MAX_QUOTE_AGE_SECONDS):
+        return None
+    return {"bid": bid, "ask": ask, "digits": int(info.digits),
+            "tick_time": tick_time, "quote_checked_at": time.time()}
+
+
+def get_quote(symbol: str) -> dict | None:
+    """Read and validate a fresh quote under the shared MT5 lock."""
+    with MT5_LOCK:
+        if mt5 is None or not mt5.initialize():
+            return None
+        try:
+            if not mt5.symbol_select(symbol, True):
+                return None
+            return _checked_quote(mt5.symbol_info_tick(symbol), mt5.symbol_info(symbol))
+        finally:
+            mt5.shutdown()
+
+
+def _get_context(symbol: str, timeframe_name: str, n_bars: int = 100) -> dict | None:
     """MT5'dan jonli narx + indikatorlarni oladi. MT5 mavjud bo'lmasa yoki
     symbol topilmasa None qaytaradi -- chaqiruvchi shunda eski (rasmdan
     taxmin qilingan) rejimga qaytadi."""
@@ -274,9 +310,12 @@ def get_context(symbol: str, timeframe_name: str, n_bars: int = 100) -> dict | N
         if not mt5.symbol_select(symbol, True):
             return None
 
-        rates = mt5.copy_rates_from_pos(symbol, TIMEFRAME_MAP[timeframe_name], 0, n_bars)
+        # O'qitishda yakunlangan shamlar ishlatilgan; joriy tugallanmagan shamni o'tkazamiz.
+        rates = mt5.copy_rates_from_pos(symbol, TIMEFRAME_MAP[timeframe_name], 1, n_bars)
         tick = mt5.symbol_info_tick(symbol)
-        if rates is None or len(rates) < 55 or tick is None:
+        info = mt5.symbol_info(symbol)
+        quote = _checked_quote(tick, info)
+        if rates is None or len(rates) < 55 or quote is None:
             return None
 
         closes = rates["close"].astype(np.float64)
@@ -288,8 +327,7 @@ def get_context(symbol: str, timeframe_name: str, n_bars: int = 100) -> dict | N
         raw.update({
             "symbol": symbol,
             "timeframe": timeframe_name,
-            "bid": float(tick.bid),
-            "ask": float(tick.ask),
+            **quote,
             "bar_time": int(rates["time"][-1]),  # oxirgi bar ochilgan vaqt (broker server vaqti, epoch)
             "server_utc_offset_hours": _server_utc_offset_hours(tick.time),
         })
@@ -305,7 +343,7 @@ def get_context(symbol: str, timeframe_name: str, n_bars: int = 100) -> dict | N
         raw["swings"] = find_swings(highs, lows)
         higher = {}
         for tf_name in HIGHER_TIMEFRAMES.get(timeframe_name, []):
-            hr = mt5.copy_rates_from_pos(symbol, TIMEFRAME_MAP[tf_name], 0, n_bars)
+            hr = mt5.copy_rates_from_pos(symbol, TIMEFRAME_MAP[tf_name], 1, n_bars)
             if hr is not None and len(hr) >= 55:
                 summary = trend_summary(hr["high"].astype(np.float64), hr["low"].astype(np.float64),
                                         hr["close"].astype(np.float64))
@@ -333,8 +371,9 @@ def compute_trade_levels(context: dict, signal: str) -> dict:
     else:
         return {"entry_price": None, "tp_price": None, "sl_price": None}
 
+    digits = context.get("digits", 5)
     return {
-        "entry_price": round(entry, 5),
-        "tp_price": round(tp, 5),
-        "sl_price": round(sl, 5),
+        "entry_price": round(entry, digits),
+        "tp_price": round(tp, digits),
+        "sl_price": round(sl, digits),
     }

@@ -39,11 +39,12 @@ class Analysis(Base):
     outcome = Column(String, nullable=True)
     outcome_kind = Column(String, nullable=True)
     outcome_checked_at = Column(DateTime, nullable=True)
+    outcome_version = Column(Integer, nullable=True)
 
     def to_dict(self) -> dict:
         return {
             "id": self.id,
-            "timestamp": self.timestamp.isoformat(),
+            "timestamp": self.timestamp.isoformat() + "Z",
             "image_path": self.image_path,
             "final_signal": self.final_signal,
             "final_confidence": self.final_confidence,
@@ -57,6 +58,7 @@ class Analysis(Base):
             "sl_price": self.sl_price,
             "outcome": self.outcome,
             "outcome_kind": self.outcome_kind,
+            "outcome_version": self.outcome_version,
             "detail": json.loads(self.raw_result),
         }
 
@@ -70,6 +72,8 @@ def _add_missing_columns():
                 conn.exec_driver_sql(f"ALTER TABLE analyses ADD COLUMN {col} VARCHAR")
         if "outcome_checked_at" not in existing:
             conn.exec_driver_sql("ALTER TABLE analyses ADD COLUMN outcome_checked_at DATETIME")
+        if "outcome_version" not in existing:
+            conn.exec_driver_sql("ALTER TABLE analyses ADD COLUMN outcome_version INTEGER")
 
 
 Base.metadata.create_all(engine)

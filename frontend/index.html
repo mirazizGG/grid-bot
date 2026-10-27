@@ -32,15 +32,16 @@
       </nav>
 
       <div class="sidebar-footer">
-        <span class="live-dot"></span>Custom Model + Gemini Vision
+        <span class="live-dot"></span>Custom Model + Gemini + Qwen
       </div>
     </aside>
 
     <main class="main">
+      <div class="service-status" id="service-status" role="status">Xizmatlar tekshirilmoqda…</div>
       <section id="view-analyze">
         <div class="page-header">
           <h2>Chart tahlil</h2>
-          <p>Savdo chartini yuklang &mdash; custom model va Gemini AI mustaqil tahlil qilib, yakuniy signal chiqaradi.</p>
+          <p>Joriy chartni yuklang. Gemini va mahalliy Qwen xulosalarini solishtiring.</p>
         </div>
 
         <div class="card">
@@ -85,6 +86,7 @@
             <input type="file" id="file-input" accept="image/png,image/jpeg,image/webp">
           </label>
           <div class="dropzone-filename" id="dropzone-filename"></div>
+          <label class="confirm-chart"><input type="checkbox" id="chart-confirm"> <span>Rasm tanlangan symbol va timeframe’ga mos, hozirgi chart ekanini tekshirdim.</span></label>
           <div style="margin-top:16px; text-align:center;">
             <button class="primary" id="analyze-btn" disabled>Tahlil qilish</button>
           </div>
@@ -97,15 +99,21 @@
       <section id="view-dashboard" style="display:none;">
         <div class="page-header">
           <h2>Dashboard</h2>
-          <p>Barcha tahlillar tarixi va umumiy statistika.</p>
+          <p>Signallaringizni kuzating va keyingi narx harakati bilan solishtiring.</p>
         </div>
         <div class="stats-row" id="stats-tiles"></div>
         <div class="card">
+          <h3 class="card-title">Gemini va Qwen natijalari</h3>
+          <p class="section-description">Gipotetik taqqoslash: bir xil joriy narx, ATR va 24 soatlik muddat. Qwen uchun darhol kirish faraz qilinadi; Gemini kutishni aytsa hisoblanmaydi. Namuna sonlari farq qilishi mumkin.</p>
+          <div class="eval-grid" id="model-tiles"></div>
+        </div>
+        <div class="card">
           <h3 class="card-title">Signal natijalari (TP/SL)</h3>
+          <p class="section-description">24 soatlik kuzatuv · TP/SL urilgan holatlar bo‘yicha. Ochiq, muddati tugagan va eski usulda baholangan holatlar foizga kiritilmaydi.</p>
           <div class="eval-grid" id="eval-tiles"></div>
           <div class="eval-actions">
             <button class="primary" id="eval-btn">Natijalarni yangilash</button>
-            <span class="outcome-hint" id="eval-status">MT5 terminali ochiq bo'lishi kerak. Namuna kichik bo'lsa raqamlar xulosa emas, faqat yo'nalish.</span>
+            <span class="outcome-hint" id="eval-status">MT5 ochiq bo‘lishi kerak. Dastlabki qisman daqiqa ticklar bilan tekshiriladi; keyin M1 shamlar. Xarajatlar to‘liq hisoblanmaydi.</span>
           </div>
         </div>
         <div class="card">
@@ -114,11 +122,19 @@
         </div>
         <div class="card">
           <h3 class="card-title">Tarix</h3>
+          <p class="section-description">Oxirgi 30 ta tahlil · batafsil ko‘rish uchun «Ochish» ni bosing</p>
           <div id="history-container"></div>
         </div>
       </section>
     </main>
   </div>
+
+  <dialog id="history-dialog" class="history-dialog">
+    <div class="dialog-heading"><h2>Tahlil tafsilotlari</h2><button type="button" id="history-close" aria-label="Yopish">✕</button></div>
+    <p id="history-time" class="section-description"></p>
+    <img id="history-image" class="history-image" alt="Tahlil qilingan chart">
+    <div id="history-result"></div>
+  </dialog>
 
   <script src="app.js"></script>
 </body>

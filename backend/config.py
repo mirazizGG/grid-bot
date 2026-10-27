@@ -8,6 +8,9 @@ load_dotenv(os.path.join(_THIS_DIR, ".env"))
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
+QWEN_MODEL = os.environ.get("QWEN_MODEL", "qwen3.5:4b")
+QWEN_TIMEOUT = float(os.environ.get("QWEN_TIMEOUT", "120"))
 
 MODEL_DIR = os.path.join(_THIS_DIR, "model")
 ONNX_MODEL_PATH = os.path.join(MODEL_DIR, "chart_signal_model.onnx")
