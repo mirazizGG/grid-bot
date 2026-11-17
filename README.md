@@ -100,6 +100,28 @@ bridge connectivity. Python uses the terminal's saved account by default; if
 another MT5 installation is selected, verify its executable path before
 changing settings. Account credentials belong in the local MT5 terminal.
 
+To update an existing Docker installation, run `scripts/update-docker.ps1`
+with the same PowerShell flags. It stages and validates the source before
+stopping the owned container/helper, retains a source backup under the printed
+temporary directory, and preserves `.docker-state` and `.venv-host`.
+
+Some MT5 sources return a broker-wall timestamp despite the Python API's UTC
+contract. The default clock profile remains UTC. A positive explicit offset
+means source timestamps are ahead of UTC; it is bound to an exact server name.
+For the observed MetaQuotes demo setup, verify and apply the 120-minute profile:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\update-docker.ps1 -Mt5Server MetaQuotes-Demo -Mt5UtcOffsetMinutes 120 -Mt5TerminalPath "C:\Program Files\MetaTrader 5\terminal64.exe"
+```
+
+The checker requires fresh advancing quotes, current bars and exact live-tick
+matches in historical requests before applying settings. Unverified history
+returns `NO_DATA`; it never guesses the query clock. Quotes and bar metadata are
+normalized once to UTC, while the existing model retains broker-hour features.
+Each published plan keeps its clock policy; unknown older policies stay legacy.
+This is a fixed source-clock profile, not an inferred historical DST calendar.
+If the server changes its clock, verify the explicit offset again.
+
 ### Native Windows
 
 Requirements: Windows + MetaTrader 5 terminal (installed, logged into a

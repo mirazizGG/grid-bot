@@ -1,5 +1,6 @@
 """Backend uchun umumiy sozlamalar."""
 import os
+import copy
 import json
 import math
 import re
@@ -8,6 +9,7 @@ import threading
 from pathlib import Path
 
 from dotenv import load_dotenv
+import mt5_clock
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(_THIS_DIR, ".env"))
@@ -53,8 +55,9 @@ _DEFAULT_SETTINGS = {
     "min_vision_override_confidence": MIN_VISION_OVERRIDE_CONFIDENCE,
     "custom_model_weight": CUSTOM_MODEL_WEIGHT, "vision_ai_weight": VISION_AI_WEIGHT,
     "default_symbol": "XAUUSD", "default_timeframe": "M15",
+    "mt5_clock_profile": mt5_clock.normalize_profile(),
 }
-_settings = dict(_DEFAULT_SETTINGS)
+_settings = copy.deepcopy(_DEFAULT_SETTINGS)
 SETTINGS_WARNING = None
 
 
@@ -62,6 +65,7 @@ def _validate_settings(values):
     unknown = set(values) - set(_DEFAULT_SETTINGS)
     if unknown:
         raise ValueError("Noma'lum sozlama maydoni")
+    values["mt5_clock_profile"] = mt5_clock.normalize_profile(values["mt5_clock_profile"])
     for key in ("analysis_enabled", "gemini_enabled", "qwen_enabled"):
         if type(values[key]) is not bool:
             raise ValueError(f"{key}: yoqish/o'chirish qiymati talab qilinadi")
@@ -89,7 +93,7 @@ def _validate_settings(values):
 
 def get_settings(public=False):
     with SETTINGS_LOCK:
-        values = dict(_settings)
+        values = copy.deepcopy(_settings)
     if public:
         values["api_key_configured"] = bool(values.pop("gemini_api_key"))
         values["warning"] = SETTINGS_WARNING

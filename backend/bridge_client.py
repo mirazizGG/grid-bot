@@ -17,6 +17,7 @@ import time
 import uuid
 
 import numpy as np
+import mt5_clock
 
 MAX_BYTES = 20 * 1024 * 1024
 MAX_PENDING = 64
@@ -215,6 +216,9 @@ class MT5Proxy:
     """Only the read-only subset used by tick evaluation; never order actions."""
     COPY_TICKS_INFO = 1
 
+    def __init__(self, clock_profile=None):
+        self.clock_profile = mt5_clock.normalize_profile(clock_profile)
+
     def initialize(self):
         result = request("health", {}, timeout=3)
         return bool(isinstance(result, dict) and (result.get("mt5_ready") is True or result.get("status") == "ready"))
@@ -231,7 +235,8 @@ class MT5Proxy:
         start_ms, end_ms = epoch_ms(start), epoch_ms(end)
         if end_ms <= start_ms or end_ms - start_ms > 300_000:
             raise BridgeError("Tick oralig'i 5 daqiqadan oshmasligi kerak")
-        rows = request("ticks", {"symbol": symbol, "start_ms": start_ms, "end_ms": end_ms}, timeout=10)
+        rows = request("ticks", {"symbol": symbol, "start_ms": start_ms, "end_ms": end_ms,
+                                 "clock_profile": self.clock_profile}, timeout=10)
         if rows is None:
             return None
         if not isinstance(rows, list) or len(rows) > 250_000:

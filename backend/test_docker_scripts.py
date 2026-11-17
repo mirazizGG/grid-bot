@@ -5,13 +5,15 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
+import zipfile
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_DIR = ROOT / "scripts"
 SCRIPTS = [SCRIPT_DIR / name for name in (
-    "docker-common.ps1", "setup-docker.ps1", "start-docker.ps1", "stop-docker.ps1")]
+    "docker-common.ps1", "setup-docker.ps1", "start-docker.ps1", "stop-docker.ps1", "update-docker.ps1")]
 SHELLS = [path for name in ("powershell.exe", "pwsh.exe", "pwsh")
           if (path := shutil.which(name))]
 SHELLS = list(dict.fromkeys(SHELLS))
@@ -125,3 +127,238 @@ def test_windows_powershell_51_can_decode_all_script_sources():
     for path in SCRIPTS:
         raw = path.read_bytes()
         assert raw.startswith(b"\xef\xbb\xbf") or raw.isascii(), f"{path.name}: non-ASCII source requires UTF-8 BOM"
+
+
+UPDATE_REQUIRED = {
+    "compose.yaml": "new compose", "Dockerfile": "new Dockerfile",
+    "scripts/docker-common.ps1": "# common", "scripts/setup-docker.ps1": "# setup",
+    "scripts/start-docker.ps1": "# start", "scripts/stop-docker.ps1": "# stop",
+    "scripts/update-docker.ps1": "# update", "backend/mt5_clock.py": "# clock",
+    "backend/requirements-host.txt": "# requirements", "backend/host_bridge.py": "# bridge",
+    ".dockerignore": "new dotfile", "backend/uploads/.gitkeep": "",
+}
+
+
+def update_python():
+    match = re.search(r"\$script:GridUpdatePython = @'\n(.*?)\n'@", source("update-docker.ps1"), re.S)
+    assert match
+    return match.group(1)
+
+
+def make_update_zip(path, extra=None, missing=None):
+    with zipfile.ZipFile(path, "w") as archive:
+        for name, value in {**UPDATE_REQUIRED, **(extra or {})}.items():
+            if name != missing:
+                entry = zipfile.ZipInfo("placeholder")
+                # ZipInfo's Windows constructor silently normalizes backslashes;
+                # preserve malicious raw ZIP member names for the reader test.
+                entry.filename = "grid-bot-test/" + name
+                archive.writestr(entry, value)
+
+
+def run_update_files(mode, root, stage, archive=None):
+    return subprocess.run([sys.executable, "-c", update_python(), mode, str(root), str(stage),
+                           str(archive or "")], capture_output=True, text=True, timeout=30)
+
+
+def test_update_preserves_runtime_and_dotfiles_with_source_backup(tmp_path):
+    root, stage = tmp_path / "project", tmp_path / "staging"
+    root.mkdir()
+    stage.mkdir()
+    state = [".docker-state/bridge/token", ".docker-state/data/runtime/settings.json",
+             ".docker-state/models/numeric_model.joblib", ".venv-host/Scripts/python.exe",
+             "backend/.env", "backend/analyses.db", "backend/server_log.txt",
+             "backend/uploads/private.png", "backups/private.zip", "notes.txt"]
+    for name in state:
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"private-user-state")
+    (root / "compose.yaml").write_text("old compose", encoding="utf-8")
+    (root / ".dockerignore").write_text("old dotfile", encoding="utf-8")
+    archive = tmp_path / "source.zip"
+    make_update_zip(archive)
+    prepared = run_update_files("prepare", root, stage, archive)
+    assert prepared.returncode == 0, prepared.stderr
+    assert (root / "compose.yaml").read_text() == "old compose"
+    installed = run_update_files("install", root, stage)
+    assert installed.returncode == 0, installed.stderr
+    assert (root / "compose.yaml").read_text() == "new compose"
+    assert (root / ".dockerignore").read_text() == "new dotfile"
+    assert (stage / "previous/compose.yaml").read_text() == "old compose"
+    assert not (root / "backend/uploads/.gitkeep").exists()
+    assert all((root / name).read_bytes() == b"private-user-state" for name in state)
+
+
+@pytest.mark.parametrize("malicious", ["../escape.py", "/escape.py", "C:/escape.py",
+    "backend/../../escape.py", "backend\\escape.py", "backend/CON.py", "backend/test.py:stream",
+    "backend/.env", ".docker-state/bridge/token", ".venv-host/Scripts/python.exe",
+    "backend/uploads/private.png", "backend/analyses.db", "backups/secret.zip"])
+def test_update_rejects_unsafe_or_private_zip_before_source_mutation(tmp_path, malicious):
+    root, stage = tmp_path / "project", tmp_path / "staging"
+    root.mkdir()
+    stage.mkdir()
+    (root / "compose.yaml").write_text("old compose")
+    archive = tmp_path / "source.zip"
+    make_update_zip(archive, {malicious: "unsafe"})
+    result = run_update_files("prepare", root, stage, archive)
+    assert result.returncode != 0
+    assert (root / "compose.yaml").read_text() == "old compose"
+    assert not (stage / "manifest.json").exists()
+
+
+@pytest.mark.parametrize("case", ["symlink", "extra_root", "missing_clock", "case_collision"])
+def test_update_rejects_incomplete_or_ambiguous_archives(tmp_path, case):
+    root, stage = tmp_path / "project", tmp_path / "staging"
+    root.mkdir()
+    stage.mkdir()
+    archive = tmp_path / "source.zip"
+    make_update_zip(archive, missing="backend/mt5_clock.py" if case == "missing_clock" else None)
+    with zipfile.ZipFile(archive, "a") as bundle:
+        if case == "symlink":
+            entry = zipfile.ZipInfo("grid-bot-test/backend/link.py")
+            entry.create_system = 3
+            entry.external_attr = 0o120777 << 16
+            bundle.writestr(entry, "../../outside")
+        elif case == "extra_root":
+            bundle.writestr("other/project.py", "bad")
+        elif case == "case_collision":
+            bundle.writestr("grid-bot-test/COMPOSE.YAML", "bad")
+    result = run_update_files("prepare", root, stage, archive)
+    assert result.returncode != 0
+    assert not (stage / "manifest.json").exists()
+
+
+def test_update_refuses_source_edits_since_preparation(tmp_path):
+    root, stage = tmp_path / "project", tmp_path / "staging"
+    root.mkdir()
+    stage.mkdir()
+    (root / "compose.yaml").write_text("old")
+    archive = tmp_path / "source.zip"
+    make_update_zip(archive)
+    result = run_update_files("prepare", root, stage, archive)
+    assert result.returncode == 0, result.stderr
+    (root / "compose.yaml").write_text("new local edit")
+    result = run_update_files("install", root, stage)
+    assert result.returncode != 0
+    assert (root / "compose.yaml").read_text() == "new local edit"
+    assert not (root / "backend/mt5_clock.py").exists()
+
+
+def test_update_rolls_back_written_source_if_copy_fails(tmp_path):
+    root, stage = tmp_path / "project", tmp_path / "staging"
+    root.mkdir()
+    stage.mkdir()
+    (root / "compose.yaml").write_text("old compose")
+    archive = tmp_path / "source.zip"
+    make_update_zip(archive)
+    assert run_update_files("prepare", root, stage, archive).returncode == 0
+    definitions = update_python().split("mode,root,stage=sys.argv[1:4]")[0]
+    injection = r'''
+root,stage=map(pathlib.Path,sys.argv[1:3])
+original=atomic_copy
+calls=0
+def fail_third(source,destination):
+    global calls
+    calls+=1
+    if calls==3:
+        raise OSError('injected copy failure')
+    return original(source,destination)
+atomic_copy=fail_third
+try:
+    install(root,stage)
+except OSError:
+    pass
+else:
+    raise AssertionError('copy should fail')
+'''
+    result = subprocess.run([sys.executable, "-c", definitions + injection, str(root), str(stage)],
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert (root / "compose.yaml").read_text() == "old compose"
+    assert not (root / "Dockerfile").exists()
+    assert not (root / "backend/mt5_clock.py").exists()
+
+
+def test_update_rejects_redirected_destination(tmp_path):
+    root, stage, outside = tmp_path / "project", tmp_path / "staging", tmp_path / "outside"
+    root.mkdir()
+    stage.mkdir()
+    outside.mkdir()
+    try:
+        (root / "backend").symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("Creating a test symlink requires unavailable Windows privilege")
+    archive = tmp_path / "source.zip"
+    make_update_zip(archive)
+    result = run_update_files("prepare", root, stage, archive)
+    assert result.returncode != 0
+    assert not list(outside.iterdir())
+
+
+@pytest.mark.parametrize("shell", SHELLS or [None])
+@pytest.mark.parametrize("fail_stop", [False, True])
+@pytest.mark.parametrize("clock", [False, True])
+def test_updater_orders_prepare_stop_wait_copy_setup_without_live_actions(tmp_path, shell, fail_stop, clock):
+    if shell is None:
+        pytest.skip("PowerShell runtime is unavailable")
+    # Dot sourcing defines functions only. All network/process/service boundaries
+    # are replaced; the command exercises the real orchestration function.
+    command = r"""
+        . $env:GRID_UPDATE_SCRIPT
+        $script:events = [System.Collections.Generic.List[string]]::new()
+        function Assert-GridWindows {}
+        function Assert-GridHostEnvironment {}
+        function Assert-GridDocker {}
+        function Assert-GridProjectOwnership {}
+        function Assert-GridPortAvailable {}
+        function Invoke-WebRequest { param($Uri,$OutFile,[switch]$UseBasicParsing,$TimeoutSec)
+            $script:events.Add('download')
+            if ($Uri -ne 'https://github.com/mirazizGG/grid-bot/archive/codex/docker-windows-dashboard.zip') { throw 'wrong source' }
+        }
+        function Invoke-GridUpdateFiles { param($Mode,$Stage,$Archive)
+            $script:events.Add($Mode)
+        }
+        function Invoke-GridUpdateStop {
+            $script:events.Add('stop')
+            if ($env:GRID_FAIL_STOP -eq '1') { throw 'fake stop failure' }
+        }
+        function Wait-GridUpdateBridgeStopped { $script:events.Add('wait-helper') }
+        function Invoke-GridUpdateSetup { $script:events.Add('setup') }
+        function Invoke-GridChecked { param($FilePath,$Arguments,$FailureMessage)
+            if ($env:GRID_TEST_CLOCK -ne '1') { throw 'must not diagnose without explicit clock parameters' }
+            if ($FilePath -ne $script:GridBotHostPython) { throw 'wrong Python executable' }
+            $expected = @((Join-Path $script:GridBotRoot 'backend\mt5_clock.py'),'--diagnose','--server','MetaQuotes-Demo','--offset-minutes','120','--apply-url',("http://127.0.0.1:{0}" -f $script:GridBotPort),'--terminal-path',$env:GRID_TEST_TERMINAL)
+            if (($Arguments | ConvertTo-Json -Compress) -ne ($expected | ConvertTo-Json -Compress)) { throw 'wrong diagnostic arguments' }
+            $script:events.Add('diagnose-apply')
+        }
+        function Invoke-RestMethod { param($Uri,$TimeoutSec)
+            $script:events.Add('status')
+            return @{ mt5 = @{status='ready'} }
+        }
+        $failure = $null
+        try {
+            if ($env:GRID_TEST_CLOCK -eq '1') {
+                Invoke-GridDockerUpdate -SelectedRevision 'codex/docker-windows-dashboard' -Server 'MetaQuotes-Demo' -HasOffset $true -OffsetMinutes 120 -TerminalPath $env:GRID_TEST_TERMINAL | Out-Null
+            } else {
+                Invoke-GridDockerUpdate -SelectedRevision 'codex/docker-windows-dashboard' | Out-Null
+            }
+        }
+        catch { $failure = $_.Exception.Message }
+        Write-Output ('RESULT:' + (ConvertTo-Json -Compress -InputObject @{events=@($script:events.ToArray()); failure=$failure}))
+    """
+    terminal = tmp_path / "terminal64.exe"
+    terminal.write_bytes(b"not executable; fixture only")
+    environment = {**os.environ, "GRID_UPDATE_SCRIPT": str(SCRIPT_DIR / "update-docker.ps1"),
+                   "GRID_TEST_CLOCK": "1" if clock else "0", "GRID_TEST_TERMINAL": str(terminal),
+                   "GRID_FAIL_STOP": "1" if fail_stop else "0", "TEMP": str(tmp_path), "TMP": str(tmp_path)}
+    result = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-Command", command],
+                            env=environment, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    output = json.loads(next(line[7:] for line in result.stdout.splitlines() if line.startswith("RESULT:")))
+    if fail_stop:
+        assert output == {"events": ["download", "prepare", "stop"], "failure": "fake stop failure"}
+    else:
+        events = ["download", "prepare", "stop", "wait-helper", "install", "setup"]
+        if clock:
+            events.append("diagnose-apply")
+        assert output == {"events": events + ["status"], "failure": None}

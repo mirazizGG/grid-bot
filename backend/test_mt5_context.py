@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import mt5_context
+import mt5_clock
 
 
 NOW = dt.datetime(2026, 11, 16, 10, 30, 20, tzinfo=dt.timezone.utc).timestamp()
@@ -226,7 +227,7 @@ def test_bridge_error_is_optional_and_retry_recovers(monkeypatch, strict):
     assert len(calls) == 1  # no implicit retry or account change
     assert recorded == ["MT5 demo hisobiga kiring (kod -6)"]
     assert mt5_context.get_quote("XAUUSD", raise_on_error=strict)["ask"] == 101
-    assert calls == [("quote", {"symbol": "XAUUSD"}, 3)] * 2
+    assert calls == [("quote", {"symbol": "XAUUSD", "clock_profile": mt5_clock.normalize_profile()}, 3)] * 2
 
 
 def test_malformed_bridge_quote_has_no_raw_value_in_diagnostic(monkeypatch):
@@ -239,3 +240,62 @@ def test_malformed_bridge_quote_has_no_raw_value_in_diagnostic(monkeypatch):
         mt5_context.get_quote("XAUUSD", raise_on_error=True)
     assert "private-secret" not in str(failure.value)
     assert recorded == [str(failure.value)]
+
+
+def test_explicit_server_clock_normalizes_context_but_preserves_model_hours(monkeypatch):
+    profile = mt5_clock.normalize_profile({"server": "MetaQuotes-Demo", "offset_minutes": 120,
+                                           "history_mode": "server"})
+    snapshots = {1: snapshot(now=NOW + 7200), 2: snapshot("H1", now=NOW + 7200),
+                 3: snapshot("H4", now=NOW + 7200)}
+    install_mt5(monkeypatch, snapshots)
+    monkeypatch.setattr(mt5_context.mt5, "account_info", lambda: SimpleNamespace(server="MetaQuotes-Demo"), raising=False)
+    monkeypatch.setattr(mt5_context.mt5, "symbol_info_tick", lambda *a: SimpleNamespace(
+        bid=201, ask=201.1, time=NOW + 7200, time_msc=int((NOW + 7200) * 1000)))
+    # An unconfigured future quote remains invalid.
+    assert mt5_context.get_quote("XAUUSD", clock_profile=mt5_clock.normalize_profile()) is None
+    context = mt5_context.get_context("XAUUSD", "M15", clock_profile=profile)
+    assert context["tick_time"] == NOW
+    assert context["raw_tick_time"] == NOW + 7200
+    assert context["bar_time"] == snapshots[1][-2]["time"] - 7200
+    assert context["raw_bar_time"] == snapshots[1][-2]["time"]
+    assert context["clock_profile"] == profile
+    assert context["feature_time_basis"] == "broker_wall"
+    assert set(context["higher_tf"]) == {"H1", "H4"}
+    broker_hour = dt.datetime.fromtimestamp(int(snapshots[1][-2]["time"]), dt.timezone.utc).hour
+    assert context["hour_sin"] == round(float(np.sin(2 * np.pi * broker_hour / 24)), 4)
+    assert context["hour_cos"] == round(float(np.cos(2 * np.pi * broker_hour / 24)), 4)
+    # Neither the native arrays nor the model's raw-hour inputs are rewritten.
+    assert snapshots[1][-1]["time"] > NOW
+
+
+@pytest.mark.parametrize("offset", [-180, 0, 120])
+@pytest.mark.parametrize("age", [-6, 61])
+def test_configured_clock_does_not_accept_genuinely_future_or_stale_quotes(monkeypatch, offset, age):
+    monkeypatch.setattr(mt5_context.time, "time", lambda: NOW)
+    profile = {"server": "MetaQuotes-Demo", "offset_minutes": offset, "history_mode": "server"}
+    tick = SimpleNamespace(bid=100, ask=101, time=NOW + offset * 60 - age)
+    assert mt5_context._checked_quote(tick, SimpleNamespace(digits=2), clock_profile=profile) is None
+
+
+def test_bridge_clock_is_already_utc_and_cannot_be_applied_twice(monkeypatch):
+    monkeypatch.setattr(mt5_context.time, "time", lambda: NOW)
+    profile = mt5_clock.normalize_profile({"server": "MetaQuotes-Demo", "offset_minutes": 120,
+                                           "history_mode": "server"})
+    quote = {"bid": 100, "ask": 101, "digits": 2, "tick_time": NOW,
+             "raw_tick_time": NOW + 7200, "clock_profile": profile, "timestamp_basis": "utc"}
+    assert mt5_context._bridge_quote(quote, profile)["tick_time"] == NOW
+    with pytest.raises(mt5_context.bridge_client.BridgeError):
+        mt5_context._bridge_quote(quote, mt5_clock.normalize_profile())
+    with pytest.raises(mt5_context.bridge_client.BridgeError):
+        mt5_context._bridge_quote({**quote, "raw_tick_time": NOW}, profile)
+
+
+def test_native_clock_rejects_another_broker_server(monkeypatch, native_quote):
+    monkeypatch.setattr(mt5_context, "mt5", SimpleNamespace(
+        initialize=lambda: True, shutdown=lambda: None,
+        account_info=lambda: SimpleNamespace(server="Different-Demo"),
+        symbol_select=lambda *a: pytest.fail("wrong server must not supply a quote"),
+    ))
+    with pytest.raises(mt5_context.MT5ReadError, match="server"):
+        mt5_context.get_quote("XAUUSD", raise_on_error=True,
+                              clock_profile={"server": "MetaQuotes-Demo", "offset_minutes": 120})

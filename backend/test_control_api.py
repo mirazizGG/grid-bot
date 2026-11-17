@@ -69,11 +69,30 @@ def test_overview_and_settings_never_return_credentials(panel):
     assert client.get("/control/settings").json()["api_key_configured"] is True
 
 
+def test_clock_profile_is_persisted_without_inventing_history_mapping(panel):
+    client, _, path = panel
+    body = {"mt5_clock_profile": {"server": "MetaQuotes-Demo", "offset_minutes": 120}}
+    response = client.post("/control/settings", json=body)
+    assert response.status_code == 200
+    profile = response.json()["mt5_clock_profile"]
+    assert profile == {"version": 1, "server": "MetaQuotes-Demo", "offset_minutes": 120,
+                       "history_mode": "unverified"}
+    assert json.loads((path / "settings.json").read_text())["mt5_clock_profile"] == profile
+    copy = config.get_settings()
+    copy["mt5_clock_profile"]["offset_minutes"] = -180
+    assert config.get_settings()["mt5_clock_profile"] == profile
+    for invalid in ({"offset_minutes": 120}, {"offset_minutes": True}, {"version": 2},
+                    {"server": "MetaQuotes-Demo", "offset_minutes": 120, "history_mode": "guess"}):
+        result = client.post("/control/settings", json={"mt5_clock_profile": invalid})
+        assert result.status_code == 400
+        assert config.get_settings()["mt5_clock_profile"] == profile
+
+
 def test_overview_exposes_mt5_connection_reason_and_clears_it_after_recovery(panel, monkeypatch):
     client, _, _ = panel
     error = "MT5 hisobiga kirish tasdiqlanmadi (kod -6)."
     connected = False
-    def quote(symbol, *, raise_on_error=False):
+    def quote(symbol, *, raise_on_error=False, clock_profile=None):
         assert raise_on_error is True
         if not connected:
             raise main.mt5_context.MT5ReadError(error)

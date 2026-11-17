@@ -16,6 +16,7 @@ import evaluator
 import gemini_vision
 import main
 import mt5_context
+import mt5_clock
 import ollama_vision
 from consensus import compute_consensus
 from fastapi.testclient import TestClient
@@ -38,7 +39,7 @@ def test_consensus_thresholds_and_genuine_hold():
 
 def test_missing_mt5_forces_hold(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "UPLOAD_DIR", str(tmp_path))
-    monkeypatch.setattr(main.mt5_context, "get_context", lambda *args: None)
+    monkeypatch.setattr(main.mt5_context, "get_context", lambda *args, **kwargs: None)
     monkeypatch.setattr(main.custom_model, "analyze", lambda ctx: {"signal": "Hold", "confidence": 0.34})
     monkeypatch.setattr(main.gemini_vision, "analyze_image", lambda *a, **kw: {
         "signal": "Buy", "confidence": 0.9, "entry_price": 1, "tp_price": 2, "sl_price": 0.5})
@@ -85,7 +86,7 @@ def test_gemini_rejects_invalid_signal_and_confidence(monkeypatch, data):
 def test_primary_signal_does_not_wait_for_optional_qwen(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "UPLOAD_DIR", str(tmp_path))
     context = {"symbol": "EURUSD", "bid": 1.0, "ask": 1.1, "atr_14": 0.1, "digits": 2}
-    monkeypatch.setattr(main.mt5_context, "get_context", lambda *args: context)
+    monkeypatch.setattr(main.mt5_context, "get_context", lambda *args, **kwargs: context)
     monkeypatch.setattr(main.mt5_context, "get_quote", lambda *args, **kwargs: {"bid": 1.0, "ask": 1.1, "digits": 2})
     monkeypatch.setattr(main.custom_model, "analyze", lambda ctx: {"signal": "Buy", "confidence": 0.8})
     monkeypatch.setattr(main.gemini_vision, "analyze_image", lambda *a, **kw: {"signal": "Buy", "confidence": 0.8, "entry_type": "market"})
@@ -120,7 +121,8 @@ def test_evaluation_rejects_missing_tick_interval(monkeypatch):
     monkeypatch.setattr(evaluator, "mt5", fake)
     session = db.SessionLocal()
     row = db.Analysis(timestamp=signal, final_signal="Buy", entry_price=1.0, tp_price=2.0, sl_price=0.5,
-                      raw_result=json.dumps({"market_context": {"symbol": "EURUSD"}, "evaluation_plan": "market"}))
+                      raw_result=json.dumps({"market_context": {"symbol": "EURUSD"}, "evaluation_plan": "market",
+                                             "evaluation_parameters": evaluator.evaluation_parameters()}))
     session.add(row)
     session.commit()
     row_id = row.id
@@ -253,11 +255,11 @@ def test_services_preserves_quote_error_when_later_bridge_operation_clears_globa
     def rpc(operation, args, **kwargs):
         calls.append(operation)
         if operation == "quote":
-            assert args == {"symbol": "EURUSD"}
+            assert args == {"symbol": "EURUSD", "clock_profile": mt5_clock.normalize_profile(None)}
             if not connected:
                 raise main.bridge_client.BridgeError(reason)
             bridge_state["last_error"] = None
-            return {"bid": 1., "ask": 1.01, "digits": 2, "tick_time": time.time()}
+            return {"bid": 1., "ask": 1.01, "digits": 2, "tick_time": time.time(), "clock_profile": args["clock_profile"]}
         assert operation == "ollama_tags"
         bridge_state["last_error"] = None
         return {"models": [{"name": main.config.get_settings()["qwen_model"]}]}
@@ -286,7 +288,7 @@ def test_services_preserves_quote_error_when_later_bridge_operation_clears_globa
 def test_rechecks_quote_and_conditional_entry(monkeypatch, tmp_path, entry_type, new_ask, expected):
     monkeypatch.setattr(main, "UPLOAD_DIR", str(tmp_path))
     ctx = {"symbol": "EURUSD", "bid": 1.0, "ask": 1.1, "atr_14": 0.1, "digits": 2}
-    monkeypatch.setattr(main.mt5_context, "get_context", lambda *a: ctx)
+    monkeypatch.setattr(main.mt5_context, "get_context", lambda *a, **kw: ctx)
     monkeypatch.setattr(main.mt5_context, "get_quote", lambda *a, **kw: {"bid": new_ask - 0.1, "ask": new_ask, "digits": 2})
     monkeypatch.setattr(main.custom_model, "analyze", lambda *a: {"signal": "Buy", "confidence": 0.8})
     monkeypatch.setattr(main.gemini_vision, "analyze_image", lambda *a, **kw: {"signal": "Buy", "confidence": 0.8, "entry_type": entry_type})
@@ -300,7 +302,7 @@ def test_rechecks_quote_and_conditional_entry(monkeypatch, tmp_path, entry_type,
     assert result["final_signal"] == expected
     if expected == "Buy":
         assert result["entry_price"] == new_ask and result["evaluation_plan"] == "market"
-        assert result["evaluation_parameters"] == {"horizon_hours": 24.0, "utc_offset": 0}
+        assert result["evaluation_parameters"] == evaluator.evaluation_parameters()
     else:
         assert result["entry_price"] is None and "evaluation_plan" not in result
 
@@ -317,7 +319,7 @@ def test_old_or_conditional_records_are_not_treated_as_executed():
 def test_screenshot_freshness_controls_signal_and_plans(monkeypatch, tmp_path, age, expected):
     monkeypatch.setattr(main, "UPLOAD_DIR", str(tmp_path))
     ctx = {"symbol": "EURUSD", "timeframe": "M15", "bid": 1.0, "ask": 1.01, "atr_14": 0.1, "digits": 2}
-    monkeypatch.setattr(main.mt5_context, "get_context", lambda *a: ctx)
+    monkeypatch.setattr(main.mt5_context, "get_context", lambda *a, **kw: ctx)
     monkeypatch.setattr(main.mt5_context, "get_quote", lambda *a, **kw: {"bid": 1.0, "ask": 1.01, "digits": 2})
     monkeypatch.setattr(main.custom_model, "analyze", lambda *a: {"signal": "Buy", "confidence": 0.8})
     monkeypatch.setattr(main.gemini_vision, "analyze_image", lambda *a, **kw: {"signal": "Buy", "confidence": 0.8, "entry_type": "market"})
@@ -372,6 +374,132 @@ def test_model_comparison_separate_plans_and_skip_conditions():
     assert evaluator.create_model_comparison(ctx, quote, {"signal": "Buy", "entry_type": "wait_breakout"}, {"error": "down"})["gemini"]["outcome"] == "SKIP"
     assert evaluator.create_model_comparison(ctx, None, gemini, qwen)["qwen"]["outcome"] == "SKIP"
     assert evaluator.create_model_comparison(ctx, {**quote, "ask": 1.2}, gemini, qwen)["gemini"]["outcome"] == "SKIP"
+    assert plans["gemini"]["clock_profile"] == mt5_clock.normalize_profile(None)
+
+
+def _clock_profile(offset=120, mode="server", server="TEST-BROKER"):
+    return mt5_clock.normalize_profile({"version": 1, "server": server,
+                                       "offset_minutes": offset, "history_mode": mode})
+
+
+@pytest.mark.parametrize("side", ["context_only", "quote_only", "different"])
+def test_model_plans_reject_one_sided_or_changed_clock_profiles(side):
+    ctx = {"symbol": "EURUSD", "bid": 1., "ask": 1.01, "atr_14": .1, "digits": 2}
+    quote = {"bid": 1., "ask": 1.01, "digits": 2}
+    if side != "quote_only":
+        ctx["clock_profile"] = _clock_profile()
+    if side != "context_only":
+        quote["clock_profile"] = _clock_profile(-60) if side == "different" else _clock_profile()
+    plans = evaluator.create_model_comparison(ctx, quote, {"signal": "Buy", "entry_type": "market"}, {"signal": "Sell"})
+    assert all(plan["outcome"] == "SKIP" and "vaqt" in plan["reason"] for plan in plans.values())
+    assert all("entry_price" not in plan for plan in plans.values())
+
+
+def test_plan_clock_policy_is_copied_and_publication_stays_utc():
+    profile = _clock_profile()
+    ctx = {"symbol": "EURUSD", "bid": 1., "ask": 1.01, "atr_14": .1, "digits": 2, "clock_profile": profile}
+    published = dt.datetime(2026, 1, 1, 12, tzinfo=dt.timezone(dt.timedelta(hours=2)))
+    plans = evaluator.create_model_comparison(ctx, dict(ctx), {"signal": "Buy", "entry_type": "market"},
+                                               {"signal": "Sell"}, published)
+    parameters = evaluator.evaluation_parameters(profile)
+    profile["offset_minutes"] = -60
+    for plan in plans.values():
+        assert plan["clock_profile"]["offset_minutes"] == 120
+        assert plan["timestamp"] == "2026-01-01T10:00:00Z" and plan["utc_offset"] == 0
+    assert parameters["clock_profile"]["offset_minutes"] == 120
+
+
+@pytest.mark.parametrize("offset,mode", [(120, "server"), (-180, "server"), (0, "utc"),
+                                         (120, "utc_query_server_result"), (120, "utc")])
+def test_tick_replay_maps_frozen_source_clock_without_moving_publication(offset, mode, monkeypatch):
+    start = dt.datetime(2026, 1, 1, 10)
+    utc_start = start.replace(tzinfo=dt.timezone.utc)
+    milliseconds = int(utc_start.timestamp() * 1000)
+    result_shift = offset * 60_000 if mode != "utc" else 0
+    rows = np.array([(milliseconds + 1000 + result_shift, .9, 1.1),
+                     (milliseconds + 2000 + result_shift, 1.9, 2.1)],
+                    dtype=[("time_msc", "i8"), ("bid", "f8"), ("ask", "f8")])
+    calls = []
+    def copy_ticks(symbol, begin, end, flags):
+        calls.append((begin, end))
+        return rows
+    fake = SimpleNamespace(COPY_TICKS_INFO=1, copy_ticks_range=copy_ticks,
+                           account_info=lambda: SimpleNamespace(server="TEST-BROKER"))
+    monkeypatch.setattr(evaluator, "mt5", fake)
+    profile = _clock_profile(offset, mode)
+    assert evaluator._evaluate_price_path("EURUSD", "Sell", 1., 2., start,
+        start + dt.timedelta(seconds=10), 24, 0, profile) == "SL"
+    query_shift = dt.timedelta(minutes=offset if mode == "server" else 0)
+    assert calls == [(utc_start + query_shift, utc_start + dt.timedelta(seconds=10) + query_shift)]
+
+
+def test_unverified_or_other_server_clock_never_reads_tick_history(monkeypatch):
+    fake = SimpleNamespace(COPY_TICKS_INFO=1, account_info=lambda: SimpleNamespace(server="OTHER-BROKER"),
+                           copy_ticks_range=lambda *a: pytest.fail("unverified or different-server history must not be read"))
+    monkeypatch.setattr(evaluator, "mt5", fake)
+    start = dt.datetime(2026, 1, 1, 10)
+    for profile in (_clock_profile(mode="unverified"), _clock_profile()):
+        assert evaluator._evaluate_price_path("EURUSD", "Buy", 2., .5, start,
+            start + dt.timedelta(seconds=10), 24, 0, profile) == "NO_DATA"
+
+
+def test_saved_plan_keeps_its_clock_when_current_settings_change(monkeypatch):
+    profile = _clock_profile()
+    ctx = {"symbol": "EURUSD", "bid": 1., "ask": 1.01, "atr_14": .5, "digits": 2, "clock_profile": profile}
+    timestamp = dt.datetime.utcnow() - dt.timedelta(seconds=10)
+    plans = evaluator.create_model_comparison(ctx, dict(ctx), {"signal": "Buy", "entry_type": "market"},
+                                               {"signal": "Hold"}, timestamp)
+    data = {"market_context": ctx, "publication_quote": dict(ctx), "evaluation_plan": "market",
+            "evaluation_parameters": evaluator.evaluation_parameters(profile), "model_comparison": plans}
+    session = db.SessionLocal()
+    row = db.Analysis(timestamp=timestamp, final_signal="Buy", entry_price=1., tp_price=2., sl_price=.5,
+                      raw_result=json.dumps(data))
+    session.add(row)
+    session.commit()
+    record_id = row.id
+    session.close()
+    monkeypatch.setattr(main.config, "_settings", {**main.config.get_settings(), "mt5_clock_profile": _clock_profile(-60)})
+    raw_ms = int(timestamp.replace(tzinfo=dt.timezone.utc).timestamp() * 1000) + 1000 + 120 * 60_000
+    rows = np.array([(raw_ms, 3., 3.1)], dtype=[("time_msc", "i8"), ("bid", "f8"), ("ask", "f8")])
+    calls = []
+    def copy_ticks(symbol, begin, end, flags):
+        calls.append(begin)
+        return rows
+    fake = SimpleNamespace(initialize=lambda: True, shutdown=lambda: None, COPY_TICKS_INFO=1,
+                           copy_ticks_range=copy_ticks, account_info=lambda: SimpleNamespace(server="TEST-BROKER"))
+    monkeypatch.setattr(evaluator, "mt5", fake)
+    evaluator.evaluate_pending()
+    expected = timestamp.replace(tzinfo=dt.timezone.utc) + dt.timedelta(minutes=120)
+    assert calls == [expected, expected]
+    session = db.SessionLocal()
+    saved = session.get(db.Analysis, record_id)
+    stored = json.loads(saved.raw_result)
+    assert saved.outcome == "TP" and saved.outcome_version == evaluator.OUTCOME_VERSION
+    assert stored["evaluation_parameters"]["clock_profile"]["offset_minutes"] == 120
+    assert stored["model_comparison"]["gemini"]["outcome"] == "TP"
+    assert stored["model_comparison"]["gemini"]["clock_profile"]["offset_minutes"] == 120
+    session.close()
+
+
+def test_old_pending_model_plan_stays_legacy_without_replaying_unknown_clock(monkeypatch):
+    old_plan = {"version": 3, "signal": "Buy", "outcome": None, "timestamp": "2026-01-01T10:00:00Z",
+                "horizon_hours": 24., "utc_offset": 0, "tp_price": 2., "sl_price": .5}
+    session = db.SessionLocal()
+    row = db.Analysis(timestamp=dt.datetime.utcnow(), final_signal="Hold", outcome="SKIP", outcome_version=5,
+                      raw_result=json.dumps({"market_context": {"symbol": "EURUSD"}, "model_comparison": {"gemini": old_plan}}))
+    session.add(row)
+    session.commit()
+    record_id = row.id
+    session.close()
+    monkeypatch.setattr(evaluator, "mt5", SimpleNamespace(initialize=lambda: True, shutdown=lambda: None))
+    monkeypatch.setattr(evaluator, "_evaluate_price_path", lambda *a, **kw: pytest.fail("old clock must remain unknown"))
+    evaluator.evaluate_pending()
+    session = db.SessionLocal()
+    saved = session.get(db.Analysis, record_id)
+    plan = json.loads(saved.raw_result)["model_comparison"]["gemini"]
+    assert plan["version"] == 3 and plan["outcome"] == "NO_DATA" and plan["reason"]
+    assert "clock_profile" not in plan and evaluator.summarize_models([saved])["gemini"]["n"] == 0
+    session.close()
 
 
 def test_model_results_evaluate_after_finalized_consensus_and_are_idempotent(monkeypatch):
@@ -387,7 +515,7 @@ def test_model_results_evaluate_after_finalized_consensus_and_are_idempotent(mon
     session.close()
     monkeypatch.setattr(evaluator, "mt5", SimpleNamespace(initialize=lambda: True, shutdown=lambda: None))
     calls = []
-    def fake_path(symbol, direction, tp, sl, timestamp, now, horizon, offset):
+    def fake_path(symbol, direction, tp, sl, timestamp, now, horizon, offset, clock_profile=None):
         calls.append((direction, horizon, offset))
         return "TP" if direction == "Buy" else "SL"
     monkeypatch.setattr(evaluator, "_evaluate_price_path", fake_path)
@@ -415,8 +543,11 @@ def test_request_cannot_change_frozen_evaluation_policy(monkeypatch, horizon, of
     assert local_client().post(f"/evaluate?horizon_hours={horizon}&utc_offset={offset or 0}").status_code == 400
 
 
-def test_old_final_outcomes_stay_legacy_and_pending_records_store_parameters(monkeypatch):
+@pytest.mark.parametrize("legacy_parameters", [None, {"horizon_hours": 24., "utc_offset": 0}])
+def test_old_final_outcomes_stay_legacy_and_unknown_pending_clock_is_not_invented(monkeypatch, legacy_parameters):
     data = {"market_context": {"symbol": "EURUSD"}, "evaluation_plan": "market"}
+    if legacy_parameters is not None:
+        data["evaluation_parameters"] = legacy_parameters
     session = db.SessionLocal()
     old = db.Analysis(timestamp=dt.datetime.utcnow() - dt.timedelta(hours=2), final_signal="Buy",
                       entry_price=1, tp_price=2, sl_price=0.5, outcome="EXPIRED", outcome_kind="signal",
@@ -428,20 +559,22 @@ def test_old_final_outcomes_stay_legacy_and_pending_records_store_parameters(mon
     old_id, pending_id = old.id, pending.id
     session.close()
     monkeypatch.setattr(evaluator, "mt5", SimpleNamespace(initialize=lambda: True, shutdown=lambda: None))
-    monkeypatch.setattr(evaluator, "_tick_path_outcome", lambda *a: "OPEN")
-    assert evaluator.evaluate_pending()["by_outcome"] == {"OPEN": 1}
+    monkeypatch.setattr(evaluator, "_tick_path_outcome", lambda *a, **kw: pytest.fail("unknown historical clock must not query MT5"))
+    assert evaluator.evaluate_pending()["by_outcome"] == {"NO_DATA": 1}
     session = db.SessionLocal()
     assert session.get(db.Analysis, old_id).outcome_version == 4
     pending = session.get(db.Analysis, pending_id)
-    assert pending.outcome_version == 5 and pending.outcome == "OPEN"
-    assert json.loads(pending.raw_result)["evaluation_parameters"] == evaluator.evaluation_parameters()
-    assert evaluator.summarize(session)["signal"]["legacy"] == 1
+    assert pending.outcome_version is None and pending.outcome == "NO_DATA"
+    stored = json.loads(pending.raw_result)
+    assert stored.get("evaluation_parameters") == legacy_parameters
+    assert stored["evaluation_clock_status"] == "legacy_unknown" and stored["evaluation_error"]
+    assert evaluator.summarize(session)["signal"]["legacy"] == 2
     session.close()
 
 
 def test_nonfinite_gemini_response_never_reaches_history(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "UPLOAD_DIR", str(tmp_path))
-    monkeypatch.setattr(main.mt5_context, "get_context", lambda *a: None)
+    monkeypatch.setattr(main.mt5_context, "get_context", lambda *a, **kw: None)
     monkeypatch.setattr(main.custom_model, "analyze", lambda *a: {"signal": "Hold", "confidence": 0.34})
     fake_client = SimpleNamespace(models=SimpleNamespace(generate_content=lambda **kw: SimpleNamespace(
         text='{"signal":"Buy","confidence":0.9,"trend":"up","reasoning":"test","entry_price":1e309}')))
@@ -458,7 +591,8 @@ def _optional_qwen_record(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "UPLOAD_DIR", str(tmp_path))
     filename = "a" * 32 + ".png"
     Image.new("RGB", (2, 2)).save(tmp_path / filename)
-    ctx = {"symbol": "EURUSD", "bid": 1.0, "ask": 1.01, "atr_14": 0.1, "digits": 2}
+    ctx = {"symbol": "EURUSD", "bid": 1.0, "ask": 1.01, "atr_14": 0.1, "digits": 2,
+           "clock_profile": mt5_clock.normalize_profile(None)}
     monkeypatch.setattr(mt5_context, "get_quote", lambda *a, **kw: ctx)
     custom = {"signal": "Buy", "confidence": 0.8}
     vision = {"signal": "Buy", "confidence": 0.8, "entry_type": "market"}
@@ -489,7 +623,7 @@ def test_optional_qwen_uses_own_publication_and_preserves_primary(monkeypatch, t
     assert plan["horizon_hours"] == 24 and plan["utc_offset"] == 0
     monkeypatch.setattr(evaluator, "mt5", SimpleNamespace(initialize=lambda: True, shutdown=lambda: None))
     starts = []
-    def evaluate_path(symbol, direction, tp, sl, timestamp, now, horizon, offset):
+    def evaluate_path(symbol, direction, tp, sl, timestamp, now, horizon, offset, clock_profile=None):
         starts.append((direction, timestamp))
         return "OPEN"
     monkeypatch.setattr(evaluator, "_evaluate_price_path", evaluate_path)
@@ -640,7 +774,7 @@ def test_slow_replay_does_not_hold_sqlite_writer_lock(monkeypatch, tmp_path):
 def test_primary_timestamp_matches_comparison_and_quote_follows_image_save(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "UPLOAD_DIR", str(tmp_path))
     ctx = {"symbol": "EURUSD", "timeframe": "M15", "bid": 1.0, "ask": 1.01, "atr_14": 0.1, "digits": 2}
-    monkeypatch.setattr(mt5_context, "get_context", lambda *a: ctx)
+    monkeypatch.setattr(mt5_context, "get_context", lambda *a, **kw: ctx)
     monkeypatch.setattr(main.custom_model, "analyze", lambda *a: {"signal": "Buy", "confidence": 0.8})
     monkeypatch.setattr(gemini_vision, "analyze_image", lambda *a, **kw: {"signal": "Buy", "confidence": 0.8, "entry_type": "market"})
     image = io.BytesIO()

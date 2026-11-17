@@ -12,6 +12,7 @@ import pytest
 import bridge_client
 import evaluator
 import mt5_context
+import mt5_clock
 
 
 TOKEN = bytes(range(32))
@@ -59,16 +60,26 @@ def test_signed_round_trip_and_cleanup(spool):
     assert not list((spool / "responses").iterdir())
 
 
-def test_real_host_spool_protocol_with_fake_native_ticks(spool, monkeypatch):
+@pytest.mark.parametrize("offset", [0, 120, -180])
+def test_real_host_spool_protocol_with_fake_native_ticks(spool, monkeypatch, offset):
     import host_bridge
     host = host_bridge.HostBridge(spool)
     start = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
     milliseconds = int(start.timestamp() * 1000)
     calls = []
     ticks = np.array([(milliseconds + 1000, 1., 1.1)], dtype=[("time_msc", "i8"), ("bid", "f8"), ("ask", "f8")])
+    native_ticks = ticks.copy()
+    native_ticks["time_msc"] += offset * 60_000
+    profile = mt5_clock.normalize_profile({"server": "MetaQuotes-Demo", "offset_minutes": offset,
+                                           "history_mode": "server"})
+    queries = []
+    def copy_ticks(symbol, begin, end, flags):
+        queries.append((begin, end))
+        return native_ticks
     fake = SimpleNamespace(initialize=lambda: calls.append("initialize") or True,
                            shutdown=lambda: calls.append("shutdown"), symbol_select=lambda *args: True,
-                           COPY_TICKS_INFO=1, copy_ticks_range=lambda *args: ticks)
+                           account_info=lambda: SimpleNamespace(server="MetaQuotes-Demo"),
+                           COPY_TICKS_INFO=1, copy_ticks_range=copy_ticks)
     monkeypatch.setattr(host_bridge.mt5_context, "mt5", fake)
     def process_one():
         deadline = time.monotonic() + 3
@@ -80,10 +91,11 @@ def test_real_host_spool_protocol_with_fake_native_ticks(spool, monkeypatch):
         raise AssertionError("No host request")
     with ThreadPoolExecutor(max_workers=1) as executor:
         worker = executor.submit(process_one)
-        received = bridge_client.MT5Proxy().copy_ticks_range("EURUSD", start, start + dt.timedelta(seconds=10), 1)
+        received = bridge_client.MT5Proxy(clock_profile=profile).copy_ticks_range("EURUSD", start, start + dt.timedelta(seconds=10), 1)
         assert worker.result() is True
     np.testing.assert_array_equal(received, ticks)
     assert calls == ["initialize", "shutdown"]
+    assert queries == [(start + dt.timedelta(minutes=offset), start + dt.timedelta(minutes=offset, seconds=10))]
 
 
 @pytest.mark.parametrize("failure", ["id", "old", "future", "error"])
@@ -216,6 +228,7 @@ def test_tick_proxy_preserves_bid_ask_and_five_minute_bound(spool, monkeypatch):
     monkeypatch.setattr(bridge_client, "request", ticks)
     assert evaluator._tick_path_outcome("EURUSD", "Sell", 1., 2., start.replace(tzinfo=None),
                                         (start + dt.timedelta(seconds=10)).replace(tzinfo=None)) == "SL"
-    assert sent[0][1] == {"symbol": "EURUSD", "start_ms": start_ms, "end_ms": start_ms + 10000}
+    assert sent[0][1] == {"symbol": "EURUSD", "start_ms": start_ms, "end_ms": start_ms + 10000,
+                          "clock_profile": mt5_clock.normalize_profile()}
     with pytest.raises(bridge_client.BridgeError, match="5 daqiqadan"):
         bridge_client.MT5Proxy().copy_ticks_range("EURUSD", start, start + dt.timedelta(minutes=6), 1)

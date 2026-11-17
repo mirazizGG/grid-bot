@@ -13,6 +13,8 @@ import math
 from types import SimpleNamespace
 
 import bridge_client
+import config
+import mt5_clock
 
 import numpy as np
 import pandas as pd
@@ -268,59 +270,78 @@ def trend_summary(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray) -> di
     return {"direction": direction, "adx": round(adx, 1), "rsi": round(_rsi(closes, 14), 1)}
 
 
-def _server_utc_offset_hours(tick_time: int) -> int | None:
-    """Broker server vaqtining UTC'dan farqi (soat). Tick yangi bo'lmasa
-    (bozor yopiq) ishonchli aniqlab bo'lmaydi -- None qaytaradi."""
-    delta = tick_time - time.time()
-    offset = round(delta / 3600)
-    if abs(delta - offset * 3600) > 600 or abs(offset) > 14:
-        return None
-    return offset
+def _clock_profile(value=None):
+    return mt5_clock.normalize_profile(config.get_settings()["mt5_clock_profile"] if value is None else value)
 
 
-def get_context(symbol: str, timeframe_name: str, n_bars: int = 100) -> dict | None:
+def get_context(symbol: str, timeframe_name: str, n_bars: int = 100, *, clock_profile=None) -> dict | None:
     with MT5_LOCK:
+        try:
+            profile = _clock_profile(clock_profile)
+        except mt5_clock.ClockProfileError:
+            return None
         if bridge_client.enabled():
             try:
                 if timeframe_name not in TIMEFRAME_SECONDS or type(n_bars) is not int or not 55 <= n_bars <= 1000:
                     return None
-                result = bridge_client.request("context", {"symbol": symbol, "timeframe": timeframe_name, "n_bars": n_bars})
+                result = bridge_client.request("context", {"symbol": symbol, "timeframe": timeframe_name,
+                                                           "n_bars": n_bars, "clock_profile": profile})
                 if result is None:
                     return None
                 if not isinstance(result, dict) or result.get("symbol") != symbol or result.get("timeframe") != timeframe_name:
                     raise bridge_client.BridgeError("Host bridge konteksti so'ralgan bozorga mos emas")
-                quote = _bridge_quote(result)
+                quote = _bridge_quote(result, profile)
                 if quote is None or not all(math.isfinite(float(value)) for value in to_feature_vector(result)) or result["atr_14"] <= 0:
                     raise bridge_client.BridgeError("Host bridge konteksti yaroqsiz yoki eskirgan")
                 return {**result, **quote}
             except (bridge_client.BridgeError, ValueError, TypeError, KeyError, OverflowError) as exc:
                 bridge_client.record_error(str(exc))
                 return None
-        return _get_context(symbol, timeframe_name, n_bars)
+        try:
+            return _get_context(symbol, timeframe_name, n_bars, clock_profile=profile)
+        except mt5_clock.ClockProfileError:
+            return None
 
 
-def _bridge_quote(result):
+def _bridge_quote(result, clock_profile=None):
     if not isinstance(result, dict):
         return None
+    profile = mt5_clock.normalize_profile(clock_profile)
+    if mt5_clock.normalize_profile(result.get("clock_profile")) != profile:
+        raise bridge_client.BridgeError("MT5 javobining vaqt sozlamalari so'rovga mos emas")
+    if result.get("timestamp_basis", "utc") != "utc":
+        raise bridge_client.BridgeError("MT5 javobining vaqti UTC sifatida tasdiqlanmagan")
     digits = result.get("digits")
     if type(digits) is not int or not 0 <= digits <= 12:
         return None
-    return _checked_quote(SimpleNamespace(bid=result["bid"], ask=result["ask"], time=result["tick_time"]),
-                          SimpleNamespace(digits=digits))
+    # The host has already converted to UTC. Applying the server offset here
+    # again would silently select a different quote/history interval.
+    quote = _checked_quote(SimpleNamespace(bid=result["bid"], ask=result["ask"], time=result["tick_time"]),
+                           SimpleNamespace(digits=digits))
+    if quote is None:
+        return None
+    raw_time = float(result.get("raw_tick_time", quote["tick_time"]))
+    if (not math.isfinite(raw_time) or
+            abs(raw_time - quote["tick_time"] - mt5_clock.offset_seconds(profile)) > 0.001):
+        raise bridge_client.BridgeError("MT5 javobining UTC va asl vaqti bir-biriga mos emas")
+    return {**quote, "clock_profile": profile, "raw_tick_time": raw_time}
 
 
-def _checked_quote(tick, info) -> dict | None:
+def _checked_quote(tick, info, *, clock_profile=None) -> dict | None:
     if tick is None or info is None:
         return None
     tick_msc = getattr(tick, "time_msc", 0)
     bid, ask = float(tick.bid), float(tick.ask)
-    tick_time = float(tick_msc) / 1000 if tick_msc else float(tick.time)
+    profile = mt5_clock.normalize_profile(clock_profile)
+    raw_tick_time = float(tick_msc) / 1000 if tick_msc else float(tick.time)
+    tick_time = raw_tick_time - mt5_clock.offset_seconds(profile)
     age = time.time() - tick_time
     if (not all(math.isfinite(x) for x in (bid, ask, tick_time)) or
             bid <= 0 or ask < bid or age < -5 or age > MAX_QUOTE_AGE_SECONDS):
         return None
     return {"bid": bid, "ask": ask, "digits": int(info.digits),
-            "tick_time": tick_time, "quote_checked_at": time.time()}
+            "tick_time": tick_time, "quote_checked_at": time.time(),
+            "raw_tick_time": raw_tick_time, "timestamp_basis": "utc", "clock_profile": profile}
 
 
 def _initialization_error() -> MT5ReadError:
@@ -339,18 +360,24 @@ def _initialization_error() -> MT5ReadError:
     return MT5ReadError(f"MT5 terminaliga ulanib bo'lmadi ({suffix}). Terminalni oching va ulanishini tekshiring.")
 
 
-def get_quote(symbol: str, *, raise_on_error: bool = False) -> dict | None:
+def get_quote(symbol: str, *, raise_on_error: bool = False, clock_profile=None) -> dict | None:
     """Read a fresh quote; optionally report safe connection/transport failures.
 
     Native quote freshness/price rejection continues to return None.
     """
     with MT5_LOCK:
+        try:
+            profile = _clock_profile(clock_profile)
+        except mt5_clock.ClockProfileError as exc:
+            if raise_on_error:
+                raise MT5ReadError(str(exc)) from exc
+            return None
         if bridge_client.enabled():
             try:
-                result = bridge_client.request("quote", {"symbol": symbol}, timeout=3)
+                result = bridge_client.request("quote", {"symbol": symbol, "clock_profile": profile}, timeout=3)
                 if result is None:
                     return None
-                quote = _bridge_quote(result)
+                quote = _bridge_quote(result, profile)
                 if quote is None:
                     raise bridge_client.BridgeError("Host bridge narxi yaroqsiz yoki eskirgan")
                 return quote
@@ -375,9 +402,16 @@ def get_quote(symbol: str, *, raise_on_error: bool = False) -> dict | None:
                 raise failure
             return None
         try:
+            mt5_clock.validate_server(mt5, profile)
             if not mt5.symbol_select(symbol, True):
                 return None
-            return _checked_quote(mt5.symbol_info_tick(symbol), mt5.symbol_info(symbol))
+            quote = _checked_quote(mt5.symbol_info_tick(symbol), mt5.symbol_info(symbol), clock_profile=profile)
+            mt5_clock.validate_server(mt5, profile)
+            return quote
+        except mt5_clock.ClockProfileError as exc:
+            if raise_on_error:
+                raise MT5ReadError(str(exc)) from exc
+            return None
         finally:
             mt5.shutdown()
 
@@ -404,7 +438,7 @@ def _checked_closed_rates(rates, timeframe_name: str, tick_time: float):
     return rates[:-1]
 
 
-def _get_context(symbol: str, timeframe_name: str, n_bars: int = 100) -> dict | None:
+def _get_context(symbol: str, timeframe_name: str, n_bars: int = 100, *, clock_profile=None) -> dict | None:
     """MT5'dan jonli narx + indikatorlarni oladi. MT5 mavjud bo'lmasa yoki
     symbol topilmasa None qaytaradi -- chaqiruvchi shunda eski (rasmdan
     taxmin qilingan) rejimga qaytadi."""
@@ -414,6 +448,8 @@ def _get_context(symbol: str, timeframe_name: str, n_bars: int = 100) -> dict | 
     if not mt5.initialize():
         return None
     try:
+        profile = _clock_profile(clock_profile)
+        mt5_clock.validate_server(mt5, profile)
         if not mt5.symbol_select(symbol, True):
             return None
 
@@ -422,25 +458,30 @@ def _get_context(symbol: str, timeframe_name: str, n_bars: int = 100) -> dict | 
         rates = mt5.copy_rates_from_pos(symbol, TIMEFRAME_MAP[timeframe_name], 0, n_bars + 1)
         tick = mt5.symbol_info_tick(symbol)
         info = mt5.symbol_info(symbol)
-        quote = _checked_quote(tick, info)
+        quote = _checked_quote(tick, info, clock_profile=profile)
         if quote is None:
             return None
-        rates = _checked_closed_rates(rates, timeframe_name, quote["tick_time"])
+        rates = _checked_closed_rates(mt5_clock.normalize_rates(rates, profile), timeframe_name, quote["tick_time"])
         if rates is None:
             return None
 
         closes = rates["close"].astype(np.float64)
         highs = rates["high"].astype(np.float64)
         lows = rates["low"].astype(np.float64)
-        bar_hour = pd.to_datetime(rates["time"][-1], unit="s").hour
+        # Existing training data encoded broker-wall hours. Correct UTC cache
+        # checks and exported timestamps without changing those model inputs.
+        raw_bar_time = int(rates["time"][-1]) + mt5_clock.offset_seconds(profile)
+        bar_hour = pd.to_datetime(raw_bar_time, unit="s").hour
 
         raw = compute_raw_indicators(highs, lows, closes, bar_hour=bar_hour)
         raw.update({
             "symbol": symbol,
             "timeframe": timeframe_name,
             **quote,
-            "bar_time": int(rates["time"][-1]),  # oxirgi bar ochilgan vaqt (broker server vaqti, epoch)
-            "server_utc_offset_hours": _server_utc_offset_hours(tick.time),
+            "bar_time": int(rates["time"][-1]),
+            "raw_bar_time": raw_bar_time,
+            "feature_time_basis": "broker_wall",
+            "server_utc_offset_hours": profile["offset_minutes"] / 60,
         })
 
         # Faqat Gemini uchun qo'shimcha kontekst (custom model xususiyatlariga kirmaydi --
@@ -455,13 +496,14 @@ def _get_context(symbol: str, timeframe_name: str, n_bars: int = 100) -> dict | 
         higher = {}
         for tf_name in HIGHER_TIMEFRAMES.get(timeframe_name, []):
             hr = mt5.copy_rates_from_pos(symbol, TIMEFRAME_MAP[tf_name], 0, n_bars + 1)
-            hr = _checked_closed_rates(hr, tf_name, quote["tick_time"])
+            hr = _checked_closed_rates(mt5_clock.normalize_rates(hr, profile), tf_name, quote["tick_time"])
             if hr is not None:
                 summary = trend_summary(hr["high"].astype(np.float64), hr["low"].astype(np.float64),
                                         hr["close"].astype(np.float64))
                 if summary:
                     higher[tf_name] = summary
         raw["higher_tf"] = higher
+        mt5_clock.validate_server(mt5, profile)
         return raw
     finally:
         mt5.shutdown()

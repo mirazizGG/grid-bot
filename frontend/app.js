@@ -229,7 +229,7 @@ function qwenResultHtml(qwen) {
 
 function modelOutcomeHtml(plan) {
   if (!plan) return "Avvalgi tahlil: alohida baholash yo‘q";
-  if (plan.version !== 3) return "Eski usuldagi baholash: yangi statistikaga kiritilmagan";
+  if (plan.version !== 4) return "Eski usuldagi baholash: yangi statistikaga kiritilmagan";
   const timestamp = plan.timestamp ? new Date(plan.timestamp) : null;
   const started = timestamp && !Number.isNaN(timestamp.getTime())
     ? `<br>Reja boshlangan vaqt: ${escapeHtml(timestamp.toLocaleString("uz-UZ"))}` : "";
@@ -361,7 +361,7 @@ function outcomeCell(row) {
   const labels = { TP: "✓ TP urildi", SL: "✗ SL urildi", OPEN: "kuzatilmoqda", EXPIRED: "muddati tugadi", NO_DATA: "ma'lumot yetarli emas" };
   const cls = o === "TP" ? "outcome-tp" : o === "SL" ? "outcome-sl" : "outcome-muted";
   const hint = hypo ? `<div class="outcome-hint">faraziy natija</div>` : "";
-  return `<span class="${cls}">${escapeHtml(labels[o] || o)}</span>${hint}${row.outcome_version !== 5 ? '<div class="outcome-hint">eski baholash</div>' : ""}`;
+  return `<span class="${cls}">${escapeHtml(labels[o] || o)}</span>${hint}${row.outcome_version !== 6 ? '<div class="outcome-hint">eski baholash</div>' : ""}`;
 }
 
 function evalTile(title, s) {
@@ -776,6 +776,12 @@ function renderControlOverview(data) {
     setServiceState("control-gemini-state", services.gemini.status === "configured" ? "Kalit sozlangan" : "Kalit kerak", services.gemini.status === "configured");
     setServiceState("control-qwen-state", services.qwen.status === "ready" ? "Model mavjud" : services.qwen.status === "model_missing" ? "Model topilmadi" : "Ulanmagan", services.qwen.status === "ready");
     document.getElementById("control-mt5-detail").textContent = `${services.mt5.symbol || "—"} · ${services.mt5.status === "ready" ? `${services.mt5.quote_age_seconds} soniya oldingi narx` : services.mt5.error || services.mt5.bridge?.last_error || "MT5 terminali va ulanishini tekshiring"}`;
+    const clock = services.mt5.clock_profile;
+    if (clock && Number.isInteger(clock.offset_minutes)) {
+      const absolute = Math.abs(clock.offset_minutes);
+      const offset = `${clock.offset_minutes < 0 ? "−" : "+"}${String(Math.floor(absolute / 60)).padStart(2, "0")}:${String(absolute % 60).padStart(2, "0")}`;
+      document.getElementById("control-mt5-detail").textContent += ` · Server UTC${offset} · ${clock.history_mode === "unverified" ? "tarixiy vaqt tasdiqlanmagan" : "tarixiy vaqt sozlangan"}`;
+    }
     document.getElementById("control-gemini-detail").textContent = services.gemini.model || "Model ma’lumoti mavjud emas";
     document.getElementById("control-qwen-detail").textContent = services.qwen.model || "Model ma’lumoti mavjud emas";
   }

@@ -29,6 +29,7 @@ import bridge_client
 import evaluator
 import gemini_vision
 import mt5_context
+import mt5_clock
 import ollama_vision
 from consensus import compute_consensus
 from db import SessionLocal, Analysis, save_analysis, claim_qwen_analysis, patch_analysis_result
@@ -154,7 +155,9 @@ async def analyze(
     filename = f"{uuid.uuid4().hex}.png"
     saved_path = os.path.join(UPLOAD_DIR, filename)
 
-    market_ctx = await run_in_threadpool(mt5_context.get_context, symbol, timeframe)
+    clock_profile = mt5_clock.normalize_profile(settings["mt5_clock_profile"])
+    market_ctx = await run_in_threadpool(mt5_context.get_context, symbol, timeframe, clock_profile=clock_profile)
+    market_ctx = _with_clock_profile(market_ctx, clock_profile)
 
     custom_result = await run_in_threadpool(custom_model.analyze, market_ctx)
     started = time.monotonic()
@@ -180,7 +183,8 @@ async def analyze(
 
     publication_quote = None
     if market_ctx:
-        publication_quote = await run_in_threadpool(mt5_context.get_quote, market_ctx["symbol"])
+        publication_quote = await run_in_threadpool(mt5_context.get_quote, market_ctx["symbol"], clock_profile=clock_profile)
+        publication_quote = _with_clock_profile(publication_quote, clock_profile)
     published_at = dt.datetime.utcnow()
     if market_ctx is None or (consensus["final_signal"] != "Hold" and publication_quote is None):
         consensus.update(final_signal="Hold", final_confidence=None, agreement=False,
@@ -255,7 +259,7 @@ async def analyze(
     consensus["warnings"] = warnings
     consensus["published_at"] = published_at.isoformat() + "Z"
     if consensus.get("evaluation_plan"):
-        consensus["evaluation_parameters"] = evaluator.evaluation_parameters()
+        consensus["evaluation_parameters"] = evaluator.evaluation_parameters(clock_profile)
     consensus["model_comparison"] = evaluator.create_model_comparison(market_ctx, publication_quote, vision_result, qwen_result, published_at)
     if stale_image:
         for plan in consensus["model_comparison"].values():
@@ -295,7 +299,11 @@ async def analyze_qwen(record_id: int):
         result = await run_in_threadpool(ollama_vision.analyze_image, image_bytes, ctx,
                                         model=settings["qwen_model"], timeout=settings["qwen_timeout"])
         if ctx:
-            quote = await run_in_threadpool(mt5_context.get_quote, ctx["symbol"])
+            # A delayed comparison retains the original source-clock policy;
+            # changed dashboard settings cannot reinterpret its saved context.
+            clock_profile = mt5_clock.normalize_profile(ctx.get("clock_profile"))
+            quote = await run_in_threadpool(mt5_context.get_quote, ctx["symbol"], clock_profile=clock_profile)
+            quote = _with_clock_profile(quote, clock_profile)
         result.update(status="completed", completed_at=dt.datetime.utcnow().isoformat() + "Z")
     except Exception as exc:
         logging.getLogger(__name__).warning("Qwen tahlili amalga oshmadi (%s)", type(exc).__name__)
@@ -407,17 +415,31 @@ def health():
     return {"status": "ok"}
 
 
+def _with_clock_profile(value, expected):
+    if value is None:
+        return None
+    try:
+        # Missing metadata is compatible only with the original UTC contract.
+        if mt5_clock.normalize_profile(value.get("clock_profile")) != expected:
+            return None
+        return {**value, "clock_profile": mt5_clock.normalize_profile(expected)}
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
 @app.get("/services")
 def services(symbol: str = "XAUUSD"):
     """Cheap checks only: no paid Gemini requests or model inference."""
     settings = config.get_settings()
+    clock_profile = mt5_clock.normalize_profile(settings["mt5_clock_profile"])
     quote = None
     quote_error = None
     acquired = mt5_context.MT5_LOCK.acquire(blocking=False)
     try:
         if acquired:
             try:
-                quote = mt5_context.get_quote(symbol.strip().upper(), raise_on_error=True)
+                quote = mt5_context.get_quote(symbol.strip().upper(), raise_on_error=True, clock_profile=clock_profile)
+                quote = _with_clock_profile(quote, clock_profile)
             except mt5_context.MT5ReadError as exc:
                 quote_error = str(exc)
     finally:
@@ -437,6 +459,7 @@ def services(symbol: str = "XAUUSD"):
     qwen["enabled"] = settings["qwen_enabled"]
     return {"mt5": {"status": "ready" if quote else "unavailable" if acquired else "busy", "symbol": symbol.strip().upper(),
                     "error": quote_error,
+                    "clock_profile": clock_profile,
                     "bridge": mt5_bridge_status,
                     "quote_age_seconds": max(0, round(time.time() - quote["tick_time"])) if quote else None},
             "gemini": {"status": "configured" if settings["gemini_api_key"] else "not_configured", "model": settings["gemini_model"],

@@ -107,6 +107,27 @@ Python odatda terminaldagi saqlangan hisobni ishlatadi. Boshqa MT5 o'rnatmasi
 tanlanayotgan bo'lsa, avval uning bajariluvchi fayl manzilini tekshiring.
 Hisob login/parolini faqat mahalliy MT5 oynasida kiriting.
 
+Mavjud Docker o'rnatmasini `scripts/update-docker.ps1` bilan yangilash mumkin.
+U yangi kodni oldindan tekshiradi, o'z konteyneri va Windows yordamchisini
+to'xtatadi, kod zaxirasining manzilini chiqaradi va qayta ishga tushiradi.
+`.docker-state` va `.venv-host` saqlanadi.
+
+Windows soati NTP bilan to'g'ri bo'lib, MT5 vaqti 120 minut oldinda kelsa,
+aniq serverga bog'langan sozlamani tekshirib qo'llash misoli:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\update-docker.ps1 -Mt5Server MetaQuotes-Demo -Mt5UtcOffsetMinutes 120 -Mt5TerminalPath "C:\Program Files\MetaTrader 5\terminal64.exe"
+```
+
+Tekshiruv jonli narxlar, joriy shamlar va tarixdagi aynan shu tiklarning
+vaqtini solishtiradi. Barcha tekshiruvlar o'tgach sozlama saqlanadi; vaqt
+domeni noaniq bo'lsa tarixiy baholash `NO_DATA` qoladi. Musbat minut — MT5
+vaqti UTC'dan oldinda; boshlang'ich sozlama UTC+0. UTC'ga o'tkazish faqat
+bir marta bajariladi, modelning broker soatiga oid xususiyatlari o'zgarmaydi.
+Har bir yangi baholash rejasi o'z vaqt sozlamasini saqlaydi. Eski noma'lum
+vaqt siyosati qayta talqin qilinmaydi. Bu avtomatik yozgi/qishki vaqt jadvali
+emas; server vaqti o'zgarsa, aniq farq qayta tekshirilishi kerak.
+
 ### Docker'siz Windows varianti
 
 ```powershell

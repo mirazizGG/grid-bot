@@ -29,6 +29,7 @@ if __name__ == "__main__":
 import config
 import control_runtime
 import mt5_context
+import mt5_clock
 import psutil
 
 MAX_BYTES = 20 * 1024 * 1024
@@ -177,16 +178,19 @@ class HostBridge:
             self.stopping.set()
             return {"status": "stopping"}
         if operation == "quote":
-            exact_args(args, ("symbol",))
-            return mt5_context.get_quote(symbol(args["symbol"]), raise_on_error=True)
+            exact_args(args, ("symbol",), ("clock_profile",))
+            profile = mt5_clock.normalize_profile(args.get("clock_profile"))
+            return mt5_context.get_quote(symbol(args["symbol"]), raise_on_error=True, clock_profile=profile)
         if operation == "context":
-            exact_args(args, ("symbol", "timeframe"), ("n_bars",))
+            exact_args(args, ("symbol", "timeframe"), ("n_bars", "clock_profile"))
+            profile = mt5_clock.normalize_profile(args.get("clock_profile"))
             count = args.get("n_bars", 100)
             if args["timeframe"] not in mt5_context.TIMEFRAME_SECONDS or type(count) is not int or not 55 <= count <= 1000:
                 raise ValueError("Invalid timeframe or candle count")
-            return mt5_context.get_context(symbol(args["symbol"]), args["timeframe"], count)
+            return mt5_context.get_context(symbol(args["symbol"]), args["timeframe"], count, clock_profile=profile)
         if operation == "ticks":
-            exact_args(args, ("symbol", "start_ms", "end_ms"))
+            exact_args(args, ("symbol", "start_ms", "end_ms"), ("clock_profile",))
+            profile = mt5_clock.normalize_profile(args.get("clock_profile"))
             selected = symbol(args["symbol"])
             start, end = args["start_ms"], args["end_ms"]
             if type(start) is not int or type(end) is not int or start < 0 or not 0 < end - start <= 300000:
@@ -200,7 +204,7 @@ class HostBridge:
                 try:
                     if not mt5.symbol_select(selected, True):
                         return None
-                    ticks = mt5.copy_ticks_range(selected, start_date, end_date, mt5.COPY_TICKS_INFO)
+                    ticks = mt5_clock.copy_ticks_utc(mt5, selected, start_date, end_date, mt5.COPY_TICKS_INFO, profile)
                     if ticks is None:
                         return None
                     if len(ticks) > 150000:

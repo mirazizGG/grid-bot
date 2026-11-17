@@ -53,8 +53,8 @@ function record(id, qwen = { source: "qwen", model: "test", status: "not_request
     custom_model: { signal: "Buy", confidence: 0.8 },
     vision_ai: { signal: "Buy", confidence: 0.8, model: "gemini-fixture" }, qwen_vision: qwen,
     model_comparison: {
-      gemini: { version: 3, outcome: null, timestamp: "2026-11-17T05:00:00Z" },
-      qwen: { version: 3, outcome: "SKIP", reason: "not requested" },
+      gemini: { version: 4, outcome: null, timestamp: "2026-11-17T05:00:00Z" },
+      qwen: { version: 4, outcome: "SKIP", reason: "not requested" },
     },
   } };
 }
@@ -154,7 +154,7 @@ test("background Qwen preserves primary controls and the current analysis", asyn
     reasoning: "fresh completion",
   });
   completed.detail.model_comparison.qwen = {
-    version: 3, outcome: null, timestamp: "2026-11-17T05:02:00Z",
+    version: 4, outcome: null, timestamp: "2026-11-17T05:02:00Z",
   };
   qwenPending.get(3).resolve(response(completed));
   await flush();
@@ -185,7 +185,7 @@ test("background Qwen preserves primary controls and the current analysis", asyn
   assert.equal(calls.length, before, "Opening history must not start inference");
   assert.match(element("history-result").innerHTML, /Qwen tahlili hali boshlanmagan/);
   assert.doesNotMatch(element("history-result").innerHTML, /NaN/);
-  assert.doesNotMatch(read('outcomeCell({outcome:"TP",outcome_version:5})'), /eski/);
+  assert.doesNotMatch(read('outcomeCell({outcome:"TP",outcome_version:6})'), /eski/);
   assert.match(read('modelOutcomeHtml({version:2,outcome:"TP"})'), /Eski/);
 
   for (const status of ["not_requested", "pending", "running", "error"]) {
