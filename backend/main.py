@@ -412,10 +412,14 @@ def services(symbol: str = "XAUUSD"):
     """Cheap checks only: no paid Gemini requests or model inference."""
     settings = config.get_settings()
     quote = None
+    quote_error = None
     acquired = mt5_context.MT5_LOCK.acquire(blocking=False)
     try:
         if acquired:
-            quote = mt5_context.get_quote(symbol.strip().upper())
+            try:
+                quote = mt5_context.get_quote(symbol.strip().upper(), raise_on_error=True)
+            except mt5_context.MT5ReadError as exc:
+                quote_error = str(exc)
     finally:
         if acquired:
             mt5_context.MT5_LOCK.release()
@@ -432,6 +436,7 @@ def services(symbol: str = "XAUUSD"):
         pass
     qwen["enabled"] = settings["qwen_enabled"]
     return {"mt5": {"status": "ready" if quote else "unavailable" if acquired else "busy", "symbol": symbol.strip().upper(),
+                    "error": quote_error,
                     "bridge": mt5_bridge_status,
                     "quote_age_seconds": max(0, round(time.time() - quote["tick_time"])) if quote else None},
             "gemini": {"status": "configured" if settings["gemini_api_key"] else "not_configured", "model": settings["gemini_model"],

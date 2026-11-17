@@ -86,7 +86,7 @@ def test_primary_signal_does_not_wait_for_optional_qwen(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "UPLOAD_DIR", str(tmp_path))
     context = {"symbol": "EURUSD", "bid": 1.0, "ask": 1.1, "atr_14": 0.1, "digits": 2}
     monkeypatch.setattr(main.mt5_context, "get_context", lambda *args: context)
-    monkeypatch.setattr(main.mt5_context, "get_quote", lambda *args: {"bid": 1.0, "ask": 1.1, "digits": 2})
+    monkeypatch.setattr(main.mt5_context, "get_quote", lambda *args, **kwargs: {"bid": 1.0, "ask": 1.1, "digits": 2})
     monkeypatch.setattr(main.custom_model, "analyze", lambda ctx: {"signal": "Buy", "confidence": 0.8})
     monkeypatch.setattr(main.gemini_vision, "analyze_image", lambda *a, **kw: {"signal": "Buy", "confidence": 0.8, "entry_type": "market"})
     calls = []
@@ -225,6 +225,61 @@ def test_quote_rejects_stale_and_invalid_prices():
     assert mt5_context._checked_quote(SimpleNamespace(bid=1, ask=1.1, time=time.time()), info) is not None
 
 
+def test_services_reports_native_authorization_failure_without_paid_inference(monkeypatch):
+    calls = []
+    fake = SimpleNamespace(initialize=lambda: calls.append("initialize") or False,
+                           last_error=lambda: (-6, "Authorization failed: password=must-not-be-exposed"),
+                           shutdown=lambda: calls.append("shutdown"))
+    monkeypatch.setattr(mt5_context, "mt5", fake)
+    monkeypatch.setattr(main.bridge_client, "enabled", lambda: False)
+    monkeypatch.setattr(main, "urlopen", lambda *a, **kw: io.BytesIO(b'{"models": []}'))
+    monkeypatch.setattr(gemini_vision, "_get_client", lambda: pytest.fail("service checks must not call Gemini"))
+    monkeypatch.setattr(gemini_vision, "analyze_image", lambda *a, **kw: pytest.fail("service checks must not run paid inference"))
+    monkeypatch.setattr(main.custom_model, "analyze", lambda *a, **kw: pytest.fail("service checks must not run model inference"))
+    response = local_client().get("/services?symbol=eurusd")
+    assert response.status_code == 200
+    status = response.json()["mt5"]
+    assert status["status"] == "unavailable" and status["symbol"] == "EURUSD"
+    assert "-6" in status["error"] and "hisobiga kirish" in status["error"]
+    assert "must-not-be-exposed" not in response.text
+    assert calls.count("initialize") == 1
+
+
+def test_services_preserves_quote_error_when_later_bridge_operation_clears_global_status(monkeypatch):
+    reason = "MT5 hisobiga kirish tasdiqlanmadi (kod -6)."
+    bridge_state = {"enabled": True, "transport": "host_bridge", "last_error": None, "last_contact": None}
+    calls = []
+    connected = False
+    def rpc(operation, args, **kwargs):
+        calls.append(operation)
+        if operation == "quote":
+            assert args == {"symbol": "EURUSD"}
+            if not connected:
+                raise main.bridge_client.BridgeError(reason)
+            bridge_state["last_error"] = None
+            return {"bid": 1., "ask": 1.01, "digits": 2, "tick_time": time.time()}
+        assert operation == "ollama_tags"
+        bridge_state["last_error"] = None
+        return {"models": [{"name": main.config.get_settings()["qwen_model"]}]}
+    monkeypatch.setattr(main.bridge_client, "enabled", lambda: True)
+    monkeypatch.setattr(main.bridge_client, "status", lambda: dict(bridge_state))
+    monkeypatch.setattr(main.bridge_client, "record_error", lambda error: bridge_state.update(last_error=error))
+    monkeypatch.setattr(main.bridge_client, "request", rpc)
+    monkeypatch.setattr(gemini_vision, "_get_client", lambda: pytest.fail("no paid service checks"))
+    response = local_client().get("/services?symbol=EURUSD")
+    assert response.status_code == 200
+    assert calls == ["quote", "ollama_tags"]
+    assert bridge_state["last_error"] is None  # A later successful RPC clears shared transport state.
+    assert response.json()["qwen"]["status"] == "ready"
+    assert response.json()["mt5"]["error"] == reason
+
+    connected = True
+    recovered = local_client().get("/services?symbol=EURUSD")
+    assert recovered.status_code == 200
+    assert recovered.json()["mt5"]["status"] == "ready"
+    assert recovered.json()["mt5"]["error"] is None
+
+
 @pytest.mark.parametrize("entry_type,new_ask,expected", [("wait_pullback", 1.1, "Hold"),
                                                          ("market", 1.2, "Hold"),
                                                          ("market", 1.11, "Buy")])
@@ -232,7 +287,7 @@ def test_rechecks_quote_and_conditional_entry(monkeypatch, tmp_path, entry_type,
     monkeypatch.setattr(main, "UPLOAD_DIR", str(tmp_path))
     ctx = {"symbol": "EURUSD", "bid": 1.0, "ask": 1.1, "atr_14": 0.1, "digits": 2}
     monkeypatch.setattr(main.mt5_context, "get_context", lambda *a: ctx)
-    monkeypatch.setattr(main.mt5_context, "get_quote", lambda *a: {"bid": new_ask - 0.1, "ask": new_ask, "digits": 2})
+    monkeypatch.setattr(main.mt5_context, "get_quote", lambda *a, **kw: {"bid": new_ask - 0.1, "ask": new_ask, "digits": 2})
     monkeypatch.setattr(main.custom_model, "analyze", lambda *a: {"signal": "Buy", "confidence": 0.8})
     monkeypatch.setattr(main.gemini_vision, "analyze_image", lambda *a, **kw: {"signal": "Buy", "confidence": 0.8, "entry_type": entry_type})
     monkeypatch.setattr(main.ollama_vision, "analyze_image", lambda *a, **kw: {"signal": "Sell", "confidence": 0.8})
@@ -263,7 +318,7 @@ def test_screenshot_freshness_controls_signal_and_plans(monkeypatch, tmp_path, a
     monkeypatch.setattr(main, "UPLOAD_DIR", str(tmp_path))
     ctx = {"symbol": "EURUSD", "timeframe": "M15", "bid": 1.0, "ask": 1.01, "atr_14": 0.1, "digits": 2}
     monkeypatch.setattr(main.mt5_context, "get_context", lambda *a: ctx)
-    monkeypatch.setattr(main.mt5_context, "get_quote", lambda *a: {"bid": 1.0, "ask": 1.01, "digits": 2})
+    monkeypatch.setattr(main.mt5_context, "get_quote", lambda *a, **kw: {"bid": 1.0, "ask": 1.01, "digits": 2})
     monkeypatch.setattr(main.custom_model, "analyze", lambda *a: {"signal": "Buy", "confidence": 0.8})
     monkeypatch.setattr(main.gemini_vision, "analyze_image", lambda *a, **kw: {"signal": "Buy", "confidence": 0.8, "entry_type": "market"})
     monkeypatch.setattr(main.ollama_vision, "analyze_image", lambda *a, **kw: {"signal": "Sell", "confidence": 0.8})
@@ -404,7 +459,7 @@ def _optional_qwen_record(monkeypatch, tmp_path):
     filename = "a" * 32 + ".png"
     Image.new("RGB", (2, 2)).save(tmp_path / filename)
     ctx = {"symbol": "EURUSD", "bid": 1.0, "ask": 1.01, "atr_14": 0.1, "digits": 2}
-    monkeypatch.setattr(mt5_context, "get_quote", lambda *a: ctx)
+    monkeypatch.setattr(mt5_context, "get_quote", lambda *a, **kw: ctx)
     custom = {"signal": "Buy", "confidence": 0.8}
     vision = {"signal": "Buy", "confidence": 0.8, "entry_type": "market"}
     result = compute_consensus(custom, vision)
@@ -420,7 +475,7 @@ def test_optional_qwen_uses_own_publication_and_preserves_primary(monkeypatch, t
     row = _optional_qwen_record(monkeypatch, tmp_path)
     primary = row.to_dict()
     monkeypatch.setattr(ollama_vision, "analyze_image", lambda *a, **kw: {"signal": "Sell", "confidence": 0.7})
-    monkeypatch.setattr(mt5_context, "get_quote", lambda *a: {"bid": 1.001, "ask": 1.011, "digits": 3})
+    monkeypatch.setattr(mt5_context, "get_quote", lambda *a, **kw: {"bid": 1.001, "ask": 1.011, "digits": 3})
     client = local_client()
     response = client.post(f"/history/{row.id}/qwen")
     assert response.status_code == 200
@@ -513,7 +568,7 @@ def test_delayed_qwen_is_not_scored_with_stale_inputs(monkeypatch, tmp_path, sta
         db.patch_analysis_result(session, row.id, {"$.image_freshness": "stale_file_timestamp"})
         session.commit()
         session.close()
-    monkeypatch.setattr(mt5_context, "get_quote", lambda *a: quote)
+    monkeypatch.setattr(mt5_context, "get_quote", lambda *a, **kw: quote)
     monkeypatch.setattr(ollama_vision, "analyze_image", lambda *a, **kw: {"signal": "Sell", "confidence": 0.7})
     response = local_client().post(f"/history/{row.id}/qwen")
     assert response.status_code == 200
@@ -596,7 +651,7 @@ def test_primary_timestamp_matches_comparison_and_quote_follows_image_save(monke
         order.append("save")
         return original_save(self, *args, **kwargs)
     monkeypatch.setattr(Image.Image, "save", save_image)
-    monkeypatch.setattr(mt5_context, "get_quote", lambda *a: order.append("quote") or ctx)
+    monkeypatch.setattr(mt5_context, "get_quote", lambda *a, **kw: order.append("quote") or ctx)
     response = local_client().post("/analyze", files={"file": ("test.png", image.getvalue(), "image/png")})
     assert response.status_code == 200
     result = response.json()

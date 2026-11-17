@@ -100,6 +100,13 @@ docker compose ps
 docker compose logs --tail 80 app
 ```
 
+MT5 `(-6)` / `Authorization failed` qaytarsa, terminalda **File → Login to Trade
+Account** orqali demo yoki real hisobingizga to'g'ri broker serveri bilan
+kiring. Panel bu xatoni Windows yordamchisi bilan aloqadan alohida ko'rsatadi.
+Python odatda terminaldagi saqlangan hisobni ishlatadi. Boshqa MT5 o'rnatmasi
+tanlanayotgan bo'lsa, avval uning bajariluvchi fayl manzilini tekshiring.
+Hisob login/parolini faqat mahalliy MT5 oynasida kiriting.
+
 ### Docker'siz Windows varianti
 
 ```powershell

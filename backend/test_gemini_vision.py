@@ -164,7 +164,7 @@ def test_server_import_without_credentials():
         import main
         import gemini_vision
         from fastapi.testclient import TestClient
-        main.mt5_context.get_quote = lambda *args: None
+        main.mt5_context.get_quote = lambda *args, **kwargs: None
         main.urlopen = lambda *args, **kwargs: io.BytesIO(b'{"models": []}')
         assert main.app is not None
         assert gemini_vision._client is None

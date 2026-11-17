@@ -83,7 +83,8 @@ async function loadServices() {
 }
 
 function renderServiceStrip(s) {
-  const mt5 = s.mt5.status === "ready" ? `MT5: ${escapeHtml(s.mt5.symbol)} · ${s.mt5.quote_age_seconds} soniya oldin` : `MT5: ${escapeHtml(s.mt5.symbol)} narxi mavjud emas yoki eskirgan`;
+  const mt5 = s.mt5.status === "ready" ? `MT5: ${escapeHtml(s.mt5.symbol)} · ${s.mt5.quote_age_seconds} soniya oldin` : s.mt5.error
+    ? `MT5: ${escapeHtml(s.mt5.error)}` : `MT5: ${escapeHtml(s.mt5.symbol)} narxi mavjud emas yoki eskirgan`;
   const gemini = s.gemini.status === "configured" ? "Gemini: kalit sozlangan" : "Gemini: kalit yo‘q";
   const qwen = s.qwen.status === "ready" ? "Qwen: model mavjud" : s.qwen.status === "model_missing" ? "Qwen: model topilmadi" : "Qwen: Ollama ulanmagan";
   const customWarning = s.custom_model?.warning
@@ -771,10 +772,10 @@ function renderControlOverview(data) {
   const services = data.services || {};
   if (services.mt5 && services.gemini && services.qwen) {
     renderServiceStrip(services);
-    setServiceState("control-mt5-state", services.mt5.status === "ready" ? "Ulangan" : "Narx mavjud emas", services.mt5.status === "ready");
+    setServiceState("control-mt5-state", services.mt5.status === "ready" ? "Ulangan" : services.mt5.error ? "Ulanish xatosi" : "Narx mavjud emas", services.mt5.status === "ready");
     setServiceState("control-gemini-state", services.gemini.status === "configured" ? "Kalit sozlangan" : "Kalit kerak", services.gemini.status === "configured");
     setServiceState("control-qwen-state", services.qwen.status === "ready" ? "Model mavjud" : services.qwen.status === "model_missing" ? "Model topilmadi" : "Ulanmagan", services.qwen.status === "ready");
-    document.getElementById("control-mt5-detail").textContent = `${services.mt5.symbol || "—"} · ${services.mt5.status === "ready" ? `${services.mt5.quote_age_seconds} soniya oldingi narx` : services.mt5.bridge?.last_error || "MT5 terminali va ulanishini tekshiring"}`;
+    document.getElementById("control-mt5-detail").textContent = `${services.mt5.symbol || "—"} · ${services.mt5.status === "ready" ? `${services.mt5.quote_age_seconds} soniya oldingi narx` : services.mt5.error || services.mt5.bridge?.last_error || "MT5 terminali va ulanishini tekshiring"}`;
     document.getElementById("control-gemini-detail").textContent = services.gemini.model || "Model ma’lumoti mavjud emas";
     document.getElementById("control-qwen-detail").textContent = services.qwen.model || "Model ma’lumoti mavjud emas";
   }

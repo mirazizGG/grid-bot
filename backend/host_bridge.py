@@ -178,7 +178,7 @@ class HostBridge:
             return {"status": "stopping"}
         if operation == "quote":
             exact_args(args, ("symbol",))
-            return mt5_context.get_quote(symbol(args["symbol"]))
+            return mt5_context.get_quote(symbol(args["symbol"]), raise_on_error=True)
         if operation == "context":
             exact_args(args, ("symbol", "timeframe"), ("n_bars",))
             count = args.get("n_bars", 100)

@@ -24,7 +24,7 @@ def panel(monkeypatch, tmp_path):
     monkeypatch.setattr(control_api, "jobs", queue)
     monkeypatch.setattr(control_api, "BACKUP_DIR", tmp_path / "backups")
     monkeypatch.setattr(control_api, "UPLOAD_DIR", tmp_path / "uploads")
-    monkeypatch.setattr(main.mt5_context, "get_quote", lambda *a: None)
+    monkeypatch.setattr(main.mt5_context, "get_quote", lambda *a, **kw: None)
     monkeypatch.setattr(main, "urlopen", lambda *a, **kw: io.BytesIO(b'{"models": []}'))
     monkeypatch.setattr(control_runtime, "runtime_snapshot", lambda: {"cpu_percent": 12, "gpus": []})
     monkeypatch.setattr(control_runtime, "service_capabilities", lambda: {
@@ -67,6 +67,29 @@ def test_overview_and_settings_never_return_credentials(panel):
     assert "gemini_api_key" not in overview.json()["settings"]
     assert overview.json()["system"]["cpu_percent"] == 12
     assert client.get("/control/settings").json()["api_key_configured"] is True
+
+
+def test_overview_exposes_mt5_connection_reason_and_clears_it_after_recovery(panel, monkeypatch):
+    client, _, _ = panel
+    error = "MT5 hisobiga kirish tasdiqlanmadi (kod -6)."
+    connected = False
+    def quote(symbol, *, raise_on_error=False):
+        assert raise_on_error is True
+        if not connected:
+            raise main.mt5_context.MT5ReadError(error)
+        return {"bid": 1., "ask": 1.01, "digits": 2, "tick_time": time.time()}
+    monkeypatch.setattr(main.mt5_context, "get_quote", quote)
+    monkeypatch.setattr(main.bridge_client, "enabled", lambda: False)
+    monkeypatch.setattr(gemini_vision, "_get_client", lambda: pytest.fail("overview must not perform paid inference"))
+    failure = client.get("/control/overview")
+    assert failure.status_code == 200
+    assert failure.json()["services"]["mt5"]["status"] == "unavailable"
+    assert failure.json()["services"]["mt5"]["error"] == error
+    connected = True
+    ready = client.get("/control/overview")
+    assert ready.status_code == 200
+    assert ready.json()["services"]["mt5"]["status"] == "ready"
+    assert ready.json()["services"]["mt5"]["error"] is None
 
 
 @pytest.mark.parametrize("changes", [{"unknown": True}, {"analysis_enabled": 1}, {"qwen_timeout": 0},

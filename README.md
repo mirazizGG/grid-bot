@@ -93,6 +93,13 @@ Set `$env:GRID_BOT_HTTP_PORT = '8812'` before a script to select another local
 port. Use `docker compose ps` and `docker compose logs --tail 80 app` to diagnose.
 Candidate artifacts/datasets are optional; the active model is included.
 
+If MT5 reports `(-6)` / `Authorization failed`, sign into the intended demo or
+live account in MT5 using **File → Login to Trade Account** and the correct
+broker server. The dashboard reports this initialization error separately from
+bridge connectivity. Python uses the terminal's saved account by default; if
+another MT5 installation is selected, verify its executable path before
+changing settings. Account credentials belong in the local MT5 terminal.
+
 ### Native Windows
 
 Requirements: Windows + MetaTrader 5 terminal (installed, logged into a

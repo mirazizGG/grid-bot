@@ -124,7 +124,7 @@ def test_qwen_inference_crosses_bridge_without_host_network_port(monkeypatch):
 
 def test_docker_services_model_tags_use_host_bridge(monkeypatch):
     monkeypatch.setattr(bridge_client, "enabled", lambda: True)
-    monkeypatch.setattr(main.mt5_context, "get_quote", lambda *a: None)
+    monkeypatch.setattr(main.mt5_context, "get_quote", lambda *a, **kw: None)
     monkeypatch.setattr(main, "urlopen", lambda *a, **kw: pytest.fail("container loopback is not Windows Ollama"))
     selected = main.config.get_settings()["qwen_model"]
     monkeypatch.setattr(bridge_client, "request", lambda *a, **kw: {"models": [{"name": selected}]})

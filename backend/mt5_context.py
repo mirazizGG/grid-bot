@@ -22,6 +22,11 @@ try:
 except ImportError:
     mt5 = None
 
+
+class MT5ReadError(ValueError):
+    """Safe MT5 connection/transport failure for callers requesting diagnostics."""
+
+
 TIMEFRAME_MAP = {}
 MT5_LOCK = threading.RLock()
 if mt5 is not None:
@@ -318,8 +323,27 @@ def _checked_quote(tick, info) -> dict | None:
             "tick_time": tick_time, "quote_checked_at": time.time()}
 
 
-def get_quote(symbol: str) -> dict | None:
-    """Read and validate a fresh quote under the shared MT5 lock."""
+def _initialization_error() -> MT5ReadError:
+    # Call immediately after initialize() fails, while MT5_LOCK is held. Never
+    # expose the native description: terminals can include sensitive values.
+    try:
+        failure = mt5.last_error()
+    except Exception:
+        failure = None
+    code = failure[0] if isinstance(failure, (tuple, list)) and failure else None
+    if type(code) is not int or not -(2 ** 31) <= code < 2 ** 31:
+        code = None
+    if code == -6:
+        return MT5ReadError("MT5 hisobiga kirish tasdiqlanmadi (kod -6). Terminalda hisobingizga kiring va shu hisobning broker serverini tekshiring.")
+    suffix = f"kod {code}" if code is not None else "kod noma'lum"
+    return MT5ReadError(f"MT5 terminaliga ulanib bo'lmadi ({suffix}). Terminalni oching va ulanishini tekshiring.")
+
+
+def get_quote(symbol: str, *, raise_on_error: bool = False) -> dict | None:
+    """Read a fresh quote; optionally report safe connection/transport failures.
+
+    Native quote freshness/price rejection continues to return None.
+    """
     with MT5_LOCK:
         if bridge_client.enabled():
             try:
@@ -330,10 +354,25 @@ def get_quote(symbol: str) -> dict | None:
                 if quote is None:
                     raise bridge_client.BridgeError("Host bridge narxi yaroqsiz yoki eskirgan")
                 return quote
-            except (bridge_client.BridgeError, ValueError, TypeError, KeyError, OverflowError) as exc:
+            except bridge_client.BridgeError as exc:
                 bridge_client.record_error(str(exc))
+                if raise_on_error:
+                    raise MT5ReadError(str(exc)) from exc
                 return None
-        if mt5 is None or not mt5.initialize():
+            except (ValueError, TypeError, KeyError, OverflowError):
+                message = "Host bridge narxi yaroqsiz yoki eskirgan"
+                bridge_client.record_error(message)
+                if raise_on_error:
+                    raise MT5ReadError(message) from None
+                return None
+        if mt5 is None:
+            if raise_on_error:
+                raise MT5ReadError("MetaTrader5 moduli mavjud emas. Windows MT5 yordamchisi va uning Python kutubxonalarini tekshiring.")
+            return None
+        if not mt5.initialize():
+            failure = _initialization_error()
+            if raise_on_error:
+                raise failure
             return None
         try:
             if not mt5.symbol_select(symbol, True):

@@ -317,6 +317,33 @@ test("control polling preserves dirty settings, secrets and visibility without o
   assert.equal(h.element("setting-gemini-api-key").value, "");
 });
 
+test("MT5 authorization errors render safely, take priority over bridge history and clear on recovery", async () => {
+  const h = createControlHarness();
+  await h.flush();
+  const authError = 'MT5 hisobiga kirish tasdiqlanmadi (kod -6). <img src=x onerror="unsafe()">';
+  h.state.services.mt5 = { status: "unavailable", symbol: "XAUUSD", quote_age_seconds: null,
+    error: authError, bridge: { enabled: true, last_error: "Old unrelated bridge failure" } };
+  await h.read("loadControlOverview()");
+  assert.equal(h.element("control-mt5-state").textContent, "Ulanish xatosi");
+  assert.equal(h.element("control-mt5-state").classes.has("warning"), true);
+  assert.equal(h.element("control-mt5-detail").textContent, `XAUUSD · ${authError}`);
+  assert.match(h.element("control-mt5-detail").innerHTML, /&lt;img/);
+  assert.doesNotMatch(h.element("control-mt5-detail").innerHTML, /<img/);
+  assert.doesNotMatch(h.element("control-mt5-detail").textContent, /Old unrelated bridge failure/);
+  assert.match(h.element("service-status").innerHTML, /kod -6/);
+  assert.match(h.element("service-status").innerHTML, /&lt;img/);
+  assert.doesNotMatch(h.element("service-status").innerHTML, /<img/);
+
+  h.state.services.mt5 = { status: "ready", symbol: "XAUUSD", quote_age_seconds: 1,
+    error: null, bridge: { enabled: true, last_error: null } };
+  await h.read("loadControlOverview()");
+  assert.equal(h.element("control-mt5-state").textContent, "Ulangan");
+  assert.equal(h.element("control-mt5-state").classes.has("warning"), false);
+  assert.equal(h.element("control-mt5-state").classes.has("ready"), true);
+  assert.equal(h.element("control-mt5-detail").textContent, "XAUUSD · 1 soniya oldingi narx");
+  assert.doesNotMatch(h.element("service-status").innerHTML, /kod -6|unsafe|Ulanish xatosi/);
+});
+
 test("initial analysis symbol and timeframe come from saved settings", async () => {
   const h = createControlHarness({ default_symbol: "BTCUSD", default_timeframe: "H1" });
   await h.flush();

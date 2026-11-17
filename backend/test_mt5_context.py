@@ -23,6 +23,7 @@ def snapshot(timeframe="M15", now=NOW, closed_count=100):
 
 def install_mt5(monkeypatch, snapshots):
     calls = []
+    monkeypatch.setattr(mt5_context.bridge_client, "enabled", lambda: False)
     monkeypatch.setattr(mt5_context.time, "time", lambda: NOW)
     monkeypatch.setattr(mt5_context, "TIMEFRAME_MAP", {"M15": 1, "H1": 2, "H4": 3})
 
@@ -91,3 +92,150 @@ def test_weekend_gap_is_allowed_when_current_session_is_fresh():
 def test_short_but_sufficient_history_is_retained():
     assert len(mt5_context._checked_closed_rates(snapshot(closed_count=55), "M15", NOW)) == 55
     assert mt5_context._checked_closed_rates(snapshot(closed_count=54), "M15", NOW) is None
+
+
+@pytest.fixture
+def native_quote(monkeypatch):
+    monkeypatch.setattr(mt5_context.bridge_client, "enabled", lambda: False)
+    monkeypatch.setattr(mt5_context.time, "time", lambda: NOW)
+
+
+def test_quote_default_keeps_none_for_initialization_failure(monkeypatch, native_quote):
+    calls = []
+    monkeypatch.setattr(mt5_context, "mt5", SimpleNamespace(
+        initialize=lambda: calls.append("initialize") or False,
+        last_error=lambda: calls.append("last_error") or (-6, "Terminal: Authorization failed"),
+    ))
+    assert mt5_context.get_quote("XAUUSD") is None
+    assert calls == ["initialize", "last_error"]
+
+
+def test_strict_quote_reports_safe_authentication_error_while_locked(monkeypatch, native_quote):
+    calls = []
+
+    class Guard:
+        active = False
+
+        def __enter__(self):
+            self.active = True
+
+        def __exit__(self, *args):
+            self.active = False
+
+    guard = Guard()
+
+    def initialize():
+        assert guard.active
+        calls.append("initialize")
+        return False
+
+    def last_error():
+        assert guard.active
+        calls.append("last_error")
+        return -6, "login=123456 password=private-password server=private-server " * 100
+
+    monkeypatch.setattr(mt5_context, "MT5_LOCK", guard)
+    monkeypatch.setattr(mt5_context, "mt5", SimpleNamespace(initialize=initialize, last_error=last_error))
+    with pytest.raises(mt5_context.MT5ReadError) as failure:
+        mt5_context.get_quote("XAUUSD", raise_on_error=True)
+    message = str(failure.value)
+    assert isinstance(failure.value, ValueError)
+    assert "-6" in message and "hisobingizga" in message and "server" in message
+    assert all(secret not in message for secret in ("123456", "private-password", "private-server"))
+    assert len(message) < 300
+    assert calls == ["initialize", "last_error"]
+    assert not guard.active
+
+
+@pytest.mark.parametrize("error", [None, (), (True, "private-secret"),
+                                   (10 ** 400, "private-secret"), (-10005, "private-secret")])
+def test_other_initialization_errors_have_bounded_static_messages(monkeypatch, native_quote, error):
+    monkeypatch.setattr(mt5_context, "mt5", SimpleNamespace(initialize=lambda: False, last_error=lambda: error))
+    with pytest.raises(mt5_context.MT5ReadError) as failure:
+        mt5_context.get_quote("XAUUSD", raise_on_error=True)
+    assert "private-secret" not in str(failure.value)
+    assert len(str(failure.value)) < 200
+    if error and error[0] == -10005:
+        assert "-10005" in str(failure.value)
+
+
+def test_failed_sdk_error_reader_does_not_expose_its_exception(monkeypatch, native_quote):
+    def last_error():
+        raise RuntimeError("password=private-password")
+
+    monkeypatch.setattr(mt5_context, "mt5", SimpleNamespace(initialize=lambda: False, last_error=last_error))
+    with pytest.raises(mt5_context.MT5ReadError) as failure:
+        mt5_context.get_quote("XAUUSD", raise_on_error=True)
+    assert "private-password" not in str(failure.value)
+    assert "noma'lum" in str(failure.value)
+
+
+def test_missing_native_module_is_optional_by_default(monkeypatch, native_quote):
+    monkeypatch.setattr(mt5_context, "mt5", None)
+    assert mt5_context.get_quote("XAUUSD") is None
+    with pytest.raises(mt5_context.MT5ReadError, match="MetaTrader5.*Windows"):
+        mt5_context.get_quote("XAUUSD", raise_on_error=True)
+
+
+def test_native_quote_recovers_after_login_without_stale_shared_error(monkeypatch, native_quote):
+    initialized = iter([False, True])
+    shutdowns = []
+    monkeypatch.setattr(mt5_context, "mt5", SimpleNamespace(
+        initialize=lambda: next(initialized), last_error=lambda: (-6, "Authorization failed"),
+        symbol_select=lambda *args: True,
+        symbol_info_tick=lambda *args: SimpleNamespace(bid=100, ask=101, time=NOW),
+        symbol_info=lambda *args: SimpleNamespace(digits=2),
+        shutdown=lambda: shutdowns.append(True),
+    ))
+    with pytest.raises(mt5_context.MT5ReadError, match="-6"):
+        mt5_context.get_quote("XAUUSD", raise_on_error=True)
+    quote = mt5_context.get_quote("XAUUSD", raise_on_error=True)
+    assert quote["bid"] == 100 and quote["ask"] == 101
+    assert shutdowns == [True]
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_stale_native_quote_still_fails_closed_without_connection_error(monkeypatch, native_quote, strict):
+    monkeypatch.setattr(mt5_context, "mt5", SimpleNamespace(
+        initialize=lambda: True, shutdown=lambda: None, symbol_select=lambda *args: True,
+        symbol_info_tick=lambda *args: SimpleNamespace(bid=100, ask=101, time=NOW - 61),
+        symbol_info=lambda *args: SimpleNamespace(digits=2),
+    ))
+    assert mt5_context.get_quote("XAUUSD", raise_on_error=strict) is None
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_bridge_error_is_optional_and_retry_recovers(monkeypatch, strict):
+    monkeypatch.setattr(mt5_context.bridge_client, "enabled", lambda: True)
+    monkeypatch.setattr(mt5_context.time, "time", lambda: NOW)
+    calls, recorded = [], []
+
+    def request(operation, args, timeout):
+        calls.append((operation, args, timeout))
+        if len(calls) == 1:
+            raise mt5_context.bridge_client.BridgeError("MT5 demo hisobiga kiring (kod -6)")
+        return {"bid": 100, "ask": 101, "digits": 2, "tick_time": NOW}
+
+    monkeypatch.setattr(mt5_context.bridge_client, "request", request)
+    monkeypatch.setattr(mt5_context.bridge_client, "record_error", recorded.append)
+    if strict:
+        with pytest.raises(mt5_context.MT5ReadError, match="demo.*-6"):
+            mt5_context.get_quote("XAUUSD", raise_on_error=True)
+    else:
+        assert mt5_context.get_quote("XAUUSD") is None
+    assert len(calls) == 1  # no implicit retry or account change
+    assert recorded == ["MT5 demo hisobiga kiring (kod -6)"]
+    assert mt5_context.get_quote("XAUUSD", raise_on_error=strict)["ask"] == 101
+    assert calls == [("quote", {"symbol": "XAUUSD"}, 3)] * 2
+
+
+def test_malformed_bridge_quote_has_no_raw_value_in_diagnostic(monkeypatch):
+    monkeypatch.setattr(mt5_context.bridge_client, "enabled", lambda: True)
+    monkeypatch.setattr(mt5_context.bridge_client, "request", lambda *args, **kwargs: {
+        "bid": "private-secret", "ask": 101, "digits": 2, "tick_time": NOW})
+    recorded = []
+    monkeypatch.setattr(mt5_context.bridge_client, "record_error", recorded.append)
+    with pytest.raises(mt5_context.MT5ReadError) as failure:
+        mt5_context.get_quote("XAUUSD", raise_on_error=True)
+    assert "private-secret" not in str(failure.value)
+    assert recorded == [str(failure.value)]

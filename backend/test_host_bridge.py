@@ -84,7 +84,7 @@ def test_allowlist_rejects_unsupported_operations(bridge, operation, args):
 def test_context_and_quote_use_existing_host_logic(bridge, monkeypatch):
     calls = []
     monkeypatch.setattr(host.mt5_context, "get_context", lambda *args: calls.append(args) or {"symbol": "EURUSD"})
-    monkeypatch.setattr(host.mt5_context, "get_quote", lambda name: {"bid": 1.1, "ask": 1.2})
+    monkeypatch.setattr(host.mt5_context, "get_quote", lambda name, **kwargs: {"bid": 1.1, "ask": 1.2})
     assert bridge.dispatch("context", {"symbol": "EURUSD", "timeframe": "M15"}) == {"symbol": "EURUSD"}
     assert calls == [("EURUSD", "M15", 100)]
     assert bridge.dispatch("quote", {"symbol": "EURUSD"})["bid"] == 1.1
@@ -93,6 +93,30 @@ def test_context_and_quote_use_existing_host_logic(bridge, monkeypatch):
                       {"symbol": "EURUSD", "timeframe": "W1"}):
         with pytest.raises(ValueError):
             bridge.dispatch("context", arguments)
+
+
+def test_authorization_failure_is_returned_as_signed_error_and_recovers(bridge, monkeypatch):
+    attempts = []
+
+    def quote(name, *, raise_on_error=False):
+        assert raise_on_error
+        attempts.append(name)
+        if len(attempts) == 1:
+            raise host.mt5_context.MT5ReadError("MT5 (-6): Hisobga kirish rad etildi")
+        return {"bid": 1.1, "ask": 1.2}
+
+    monkeypatch.setattr(host.mt5_context, "get_quote", quote)
+    failed = request(bridge, "quote", {"symbol": "XAUUSD"})
+    assert bridge.process_file(failed)
+    error = response(bridge, failed)
+    assert error["ok"] is False and "-6" in error["error"]
+    assert error["result"] is None
+
+    recovered = request(bridge, "quote", {"symbol": "XAUUSD"})
+    assert bridge.process_file(recovered)
+    success = response(bridge, recovered)
+    assert success["ok"] is True and success["error"] is None
+    assert success["result"]["bid"] == 1.1
 
 
 def test_ticks_preserve_utc_milliseconds_and_cleanup_connection(bridge, monkeypatch):
