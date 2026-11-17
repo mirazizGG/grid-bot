@@ -3,13 +3,95 @@ import json
 import math
 import threading
 
+import httpx
 from google import genai
+from google.genai import errors
 from google.genai import types
 
 from config import GEMINI_API_KEY, GEMINI_MODEL
 
 _client = None
 _CLIENT_LOCK = threading.RLock()
+
+
+class GeminiResponseError(ValueError):
+    """A locally detected invalid provider response, without retaining its text."""
+
+
+def safe_error(exc) -> dict:
+    """Classify failures using fixed text; never expose provider exception text."""
+    code, kind = None, "unknown"
+    if isinstance(exc, GeminiResponseError):
+        kind = "response"
+    elif isinstance(exc, httpx.TimeoutException):
+        kind = "timeout"
+    elif isinstance(exc, httpx.TransportError):
+        kind = "network"
+    elif isinstance(exc, errors.APIError):
+        raw_code = getattr(exc, "code", None)
+        code = raw_code if type(raw_code) is int and 400 <= raw_code <= 599 else None
+        statuses = {"UNAUTHENTICATED", "PERMISSION_DENIED", "NOT_FOUND", "RESOURCE_EXHAUSTED",
+                    "INVALID_ARGUMENT", "FAILED_PRECONDITION", "INTERNAL", "UNAVAILABLE", "DEADLINE_EXCEEDED"}
+        raw_status = getattr(exc, "status", None)
+        status = raw_status if isinstance(raw_status, str) and raw_status in statuses else None
+        reason_kinds = {"API_KEY_INVALID": "authentication", "BILLING_DISABLED": "billing",
+                        "CONSUMER_INVALID": "project", "CONSUMER_SUSPENDED": "project",
+                        "SERVICE_DISABLED": "project", "PROJECT_DELETED": "project",
+                        "API_KEY_SERVICE_BLOCKED": "permission", "API_KEY_HTTP_REFERRER_BLOCKED": "permission",
+                        "API_KEY_IP_ADDRESS_BLOCKED": "permission", "API_KEY_ANDROID_APP_BLOCKED": "permission",
+                        "API_KEY_IOS_APP_BLOCKED": "permission"}
+        payload = getattr(exc, "details", None)
+        if isinstance(payload, dict):
+            payload = payload.get("error", payload)
+            details = payload.get("details", []) if isinstance(payload, dict) else []
+        else:
+            details = payload if isinstance(payload, list) else []
+        reason_kind = None
+        if isinstance(details, list):
+            for detail in details[:16]:
+                if not isinstance(detail, dict) or detail.get("@type") != "type.googleapis.com/google.rpc.ErrorInfo":
+                    continue
+                reason = detail.get("reason")
+                if isinstance(reason, str) and reason in reason_kinds:
+                    reason_kind = reason_kinds[reason]
+                    break
+        if code == 429:
+            kind = "quota"
+        elif code is not None and code >= 500:
+            kind = "service"
+        elif reason_kind:
+            kind = reason_kind
+        elif code == 401:
+            kind = "authentication"
+        elif code == 402:
+            kind = "billing"
+        elif code == 403:
+            kind = "permission"
+        elif code == 404:
+            kind = "model"
+        elif code == 400:
+            kind = "request"
+        elif code is None:
+            kind = {"UNAUTHENTICATED": "authentication", "PERMISSION_DENIED": "permission",
+                    "NOT_FOUND": "model", "RESOURCE_EXHAUSTED": "quota", "INVALID_ARGUMENT": "request",
+                    "FAILED_PRECONDITION": "request", "INTERNAL": "service", "UNAVAILABLE": "service",
+                    "DEADLINE_EXCEEDED": "service"}.get(status, "unknown")
+    messages = {
+        "authentication": "Gemini API kaliti tasdiqlanmadi. Kalitni tekshiring.",
+        "billing": "Gemini loyihasining to'lov holati so'rovga ruxsat bermadi. AI Studio billing sozlamalarini tekshiring.",
+        "project": "Gemini loyihasi yoki undagi API xizmati so'rovga ruxsat bermadi. AI Studio loyiha sozlamalarini tekshiring.",
+        "permission": "Gemini bu kalit yoki loyihaga ruxsat bermadi. Kalit cheklovlari va loyiha ruxsatlarini tekshiring.",
+        "model": "Gemini modeli ushbu API yoki loyiha uchun topilmadi. Model nomi va kirish huquqini tekshiring.",
+        "quota": "Gemini kvotasi yoki so'rov chegarasi oshgan. AI Studio dagi limitlarni tekshiring.",
+        "request": "Gemini so'rovni qabul qilmadi. Model va so'rov sozlamalarini tekshiring.",
+        "service": "Gemini xizmati so'rovni bajarolmadi. Xizmat holatini tekshiring va keyinroq qayta urinib ko'ring.",
+        "timeout": "Gemini javobini kutish muddati tugadi. Keyinroq qayta urinib ko'ring.",
+        "network": "Gemini bilan aloqa o'rnatilmadi. Internet, DNS, TLS va proksi sozlamalarini tekshiring.",
+        "response": "Gemini javobi kutilgan tuzilishga mos kelmadi. Qayta tahlil qiling.",
+        "unknown": "Gemini tahlili tugamadi. Server jurnali va xizmat sozlamalarini tekshiring.",
+    }
+    message = messages[kind] + (f" (HTTP {code})" if code is not None else "")
+    return {"kind": kind, "code": code, "message": message}
 
 
 def _get_client():
@@ -138,13 +220,13 @@ def _format_base_context(ctx: dict) -> str:
 
 def _finite_number(value, field: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"Gemini javobida {field} son bo'lishi kerak")
+        raise GeminiResponseError(f"Gemini javobida {field} son bo'lishi kerak")
     try:
         number = float(value)
     except OverflowError as exc:
-        raise ValueError(f"Gemini javobida {field} qiymati noto'g'ri") from exc
+        raise GeminiResponseError(f"Gemini javobida {field} qiymati noto'g'ri") from exc
     if not math.isfinite(number):
-        raise ValueError(f"Gemini javobida {field} qiymati chekli son bo'lishi kerak")
+        raise GeminiResponseError(f"Gemini javobida {field} qiymati chekli son bo'lishi kerak")
     return number
 
 
@@ -152,23 +234,23 @@ def _validate_response(text: str) -> dict:
     try:
         parsed = json.loads(text)
     except (TypeError, ValueError) as exc:
-        raise ValueError("Gemini javobi kutilgan JSON formatida emas") from exc
+        raise GeminiResponseError("Gemini javobi kutilgan JSON formatida emas") from exc
     if not isinstance(parsed, dict):
-        raise ValueError("Gemini javobi JSON obyekt bo'lishi kerak")
+        raise GeminiResponseError("Gemini javobi JSON obyekt bo'lishi kerak")
 
     signal = parsed.get("signal")
     confidence = _finite_number(parsed.get("confidence"), "confidence")
     if signal not in ("Buy", "Sell", "Hold") or not 0 <= confidence <= 1:
-        raise ValueError("Gemini javobida signal yoki ishonch qiymati noto'g'ri")
+        raise GeminiResponseError("Gemini javobida signal yoki ishonch qiymati noto'g'ri")
     for field in ("trend", "reasoning"):
         if not isinstance(parsed.get(field), str):
-            raise ValueError(f"Gemini javobida {field} matn bo'lishi kerak")
+            raise GeminiResponseError(f"Gemini javobida {field} matn bo'lishi kerak")
     entry_type = parsed.get("entry_type")
     if entry_type not in (None, "market", "wait_pullback", "wait_breakout"):
-        raise ValueError("Gemini javobida entry_type qiymati noto'g'ri")
+        raise GeminiResponseError("Gemini javobida entry_type qiymati noto'g'ri")
     entry_note = parsed.get("entry_note")
     if entry_note is not None and not isinstance(entry_note, str):
-        raise ValueError("Gemini javobida entry_note matn yoki null bo'lishi kerak")
+        raise GeminiResponseError("Gemini javobida entry_note matn yoki null bo'lishi kerak")
 
     prices = {}
     for field in ("entry_price", "tp_price", "sl_price"):
@@ -176,7 +258,7 @@ def _validate_response(text: str) -> dict:
         if value is not None:
             value = _finite_number(value, field)
             if value <= 0:
-                raise ValueError(f"Gemini javobida {field} musbat son bo'lishi kerak")
+                raise GeminiResponseError(f"Gemini javobida {field} musbat son bo'lishi kerak")
         prices[field] = value
 
     return {

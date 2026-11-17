@@ -587,6 +587,57 @@ def test_nonfinite_gemini_response_never_reaches_history(monkeypatch, tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
+@pytest.mark.parametrize("code", [400, 401, 403, 404, 429, 500, 503])
+def test_gemini_api_failure_exposes_safe_code_without_saving_or_retrying(monkeypatch, tmp_path, caplog, code):
+    from google.genai.errors import ClientError, ServerError
+
+    secret = "private-provider-key-and-request-metadata"
+    error_type = ClientError if code < 500 else ServerError
+    error = error_type(code, {"error": {"code": code, "message": secret,
+                                      "status": "UNTRUSTED_STATUS_" + secret,
+                                      "details": [{"metadata": {"request": secret}}]}})
+    attempts = []
+
+    def fail(*args, **kwargs):
+        attempts.append(1)
+        raise error
+
+    monkeypatch.setattr(main, "UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(main.mt5_context, "get_context", lambda *a, **kw: None)
+    monkeypatch.setattr(main.custom_model, "analyze", lambda *a: {"signal": "Hold", "confidence": 0.34})
+    monkeypatch.setattr(main.gemini_vision, "analyze_image", fail)
+    monkeypatch.setattr(main, "save_analysis", lambda *a: pytest.fail("failed inference must not create history"))
+    image = io.BytesIO()
+    Image.new("RGB", (2, 2)).save(image, "PNG")
+    client = local_client()
+    response = client.post("/analyze", files={"file": ("test.png", image.getvalue(), "image/png")})
+    assert response.status_code == 502
+    data = response.json()
+    assert data["gemini_error"]["code"] == code
+    assert str(code) in data["detail"]
+    assert secret not in response.text and secret not in caplog.text
+    assert attempts == [1]
+    assert client.get("/history").json() == []
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_unknown_gemini_failure_never_echoes_exception_message(monkeypatch, caplog):
+    secret = "private-key-in-local-exception"
+
+    def fail(*args, **kwargs):
+        raise RuntimeError(secret)
+
+    monkeypatch.setattr(main.mt5_context, "get_context", lambda *a, **kw: None)
+    monkeypatch.setattr(main.custom_model, "analyze", lambda *a: {"signal": "Hold", "confidence": 0.34})
+    monkeypatch.setattr(main.gemini_vision, "analyze_image", fail)
+    image = io.BytesIO()
+    Image.new("RGB", (2, 2)).save(image, "PNG")
+    response = local_client().post("/analyze", files={"file": ("test.png", image.getvalue(), "image/png")})
+    assert response.status_code == 502
+    assert response.json()["gemini_error"]["code"] is None
+    assert secret not in response.text and secret not in caplog.text
+
+
 def _optional_qwen_record(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "UPLOAD_DIR", str(tmp_path))
     filename = "a" * 32 + ".png"

@@ -165,8 +165,13 @@ async def analyze(
         vision_result = await run_in_threadpool(gemini_vision.analyze_image, image_bytes, file.content_type,
                                                 market_context=market_ctx, settings=settings)
     except Exception as exc:
-        logging.getLogger(__name__).warning("Gemini tahlili amalga oshmadi (%s)", type(exc).__name__)
-        raise HTTPException(502, "Gemini tahlili amalga oshmadi. Xizmat va API sozlamalarini tekshiring.")
+        diagnostic = gemini_vision.safe_error(exc)
+        # APIError.__str__ contains the complete provider payload, including
+        # request metadata. Only fixed messages and bounded codes leave here.
+        logging.getLogger(__name__).warning("Gemini tahlili amalga oshmadi (kind=%s, code=%s)",
+                                            diagnostic["kind"], diagnostic["code"])
+        return JSONResponse(status_code=502, content={"detail": diagnostic["message"],
+                            "gemini_error": {"kind": diagnostic["kind"], "code": diagnostic["code"]}})
     # Optional local inference is requested separately after the primary signal
     # is published. It cannot occupy an analysis slot or age the primary quote.
     qwen_result = {"source": "qwen", "model": settings["qwen_model"], "status": "not_requested"}

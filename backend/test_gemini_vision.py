@@ -8,6 +8,8 @@ import textwrap
 from types import SimpleNamespace
 
 import pytest
+import httpx
+from google.genai import errors
 
 import gemini_vision
 
@@ -183,3 +185,112 @@ def test_server_import_without_credentials():
                             capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
     assert "server import succeeded without credentials" in result.stdout
+
+
+def offline_api_error(code, status="INVALID_ARGUMENT", reason=None):
+    details = [] if reason is None else [{
+        "@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": reason,
+        "metadata": {"api_key": "private-secret", "url": "https://private.invalid/?key=private-secret"},
+    }]
+    return errors.APIError(code, {"error": {"code": code, "status": status,
+        "message": "private-secret provider message", "details": details}})
+
+
+@pytest.mark.parametrize("code,kind", [(400, "request"), (401, "authentication"), (402, "billing"),
+    (403, "permission"), (404, "model"), (429, "quota"), (500, "service"), (503, "service")])
+def test_safe_sdk_http_errors_have_fixed_messages_without_private_payload(code, kind):
+    result = gemini_vision.safe_error(offline_api_error(code))
+    assert result["kind"] == kind and result["code"] == code
+    assert f"HTTP {code}" in result["message"]
+    assert set(result) == {"kind", "code", "message"}
+    assert "private" not in json.dumps(result, allow_nan=False)
+
+
+@pytest.mark.parametrize("reason,kind", [("API_KEY_INVALID", "authentication"), ("BILLING_DISABLED", "billing"),
+    ("CONSUMER_INVALID", "project"), ("SERVICE_DISABLED", "project"), ("PROJECT_DELETED", "project"),
+    ("API_KEY_SERVICE_BLOCKED", "permission"), ("API_KEY_HTTP_REFERRER_BLOCKED", "permission")])
+def test_safe_error_uses_only_allowlisted_errorinfo_reasons(reason, kind):
+    result = gemini_vision.safe_error(offline_api_error(403, reason=reason))
+    assert result["kind"] == kind and result["code"] == 403
+    assert "private" not in json.dumps(result, allow_nan=False)
+
+
+def test_quota_does_not_claim_daily_or_per_minute_limit_from_raw_details():
+    exc = offline_api_error(429, status="RESOURCE_EXHAUSTED")
+    exc.details["error"]["message"] = "private-secret daily limit resets tomorrow after billing"
+    exc.details["error"]["details"] = [{"@type": "type.googleapis.com/google.rpc.QuotaFailure",
+        "violations": [{"description": "private-secret daily limit"}]}]
+    result = gemini_vision.safe_error(exc)
+    assert result["kind"] == "quota"
+    assert all(word not in result["message"] for word in ("daily", "tomorrow", "kunlik", "ertaga", "private-secret"))
+
+
+@pytest.mark.parametrize("payload", [None, "private-secret", ["private-secret"],
+    {"error": "private-secret"}, {"error": {"details": "private-secret"}},
+    {"error": {"details": [{"reason": "BILLING_DISABLED", "message": "private-secret"}]}},
+    {"error": {"details": [{"@type": "type.googleapis.com/google.rpc.LocalizedMessage", "reason": "BILLING_DISABLED"}]}},
+    {"error": {"details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": ["private-secret"]}]}},
+    {"error": {"details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "API_KEY_INVALID private-secret"}]}},
+])
+def test_malformed_or_unrecognized_provider_details_cannot_escape(payload):
+    exc = offline_api_error(403)
+    exc.details = payload
+    exc.status = "private-secret status"
+    result = gemini_vision.safe_error(exc)
+    assert result["kind"] == "permission"
+    assert "private" not in json.dumps(result, allow_nan=False)
+
+
+@pytest.mark.parametrize("code", [True, False, "403", 403.0, None, 200, 399, 600, 10 ** 400, {}])
+def test_untrusted_http_code_is_not_rendered_or_serialized(code):
+    exc = offline_api_error(403)
+    exc.code, exc.status, exc.details = code, "private-secret", "private-secret"
+    result = gemini_vision.safe_error(exc)
+    assert result["code"] is None and result["kind"] == "unknown"
+    assert "HTTP" not in result["message"] and "private" not in json.dumps(result, allow_nan=False)
+
+
+@pytest.mark.parametrize("status,kind", [("UNAUTHENTICATED", "authentication"), ("PERMISSION_DENIED", "permission"),
+    ("RESOURCE_EXHAUSTED", "quota"), ("NOT_FOUND", "model"), ("FAILED_PRECONDITION", "request")])
+def test_allowlisted_rpc_status_is_a_safe_fallback_without_a_valid_http_code(status, kind):
+    exc = offline_api_error(400, status=status)
+    exc.code = None
+    result = gemini_vision.safe_error(exc)
+    assert result["kind"] == kind and result["code"] is None
+
+
+@pytest.mark.parametrize("exception,kind", [
+    (httpx.ReadTimeout("private-secret", request=httpx.Request("GET", "https://private.invalid/?key=private-secret")), "timeout"),
+    (httpx.ConnectTimeout("private-secret"), "timeout"),
+    (httpx.ConnectError("private-secret"), "network"),
+    (httpx.ProxyError("private-secret"), "network"),
+    (RuntimeError("private-secret"), "unknown"),
+    (ValueError("private-secret response text"), "unknown"),
+])
+def test_transport_and_unknown_errors_never_expose_messages_or_request_urls(exception, kind):
+    result = gemini_vision.safe_error(exception)
+    assert result["kind"] == kind and result["code"] is None
+    assert "private" not in json.dumps(result, allow_nan=False)
+
+
+def test_only_typed_local_validation_failure_is_reported_as_response_error():
+    with pytest.raises(gemini_vision.GeminiResponseError) as failure:
+        gemini_vision._validate_response('{"confidence":"private-secret"}')
+    result = gemini_vision.safe_error(failure.value)
+    assert result["kind"] == "response" and result["code"] is None
+    assert "private" not in json.dumps(result, allow_nan=False)
+    assert gemini_vision.safe_error(ValueError("Gemini javobi private-secret"))["kind"] == "unknown"
+
+
+def test_reason_scan_is_bounded_and_never_parses_exception_text():
+    exc = offline_api_error(400)
+    exc.message = "API_KEY_INVALID private-secret"
+    exc.details["error"]["details"] = [{}] * 16 + [{
+        "@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "API_KEY_INVALID"}]
+    assert gemini_vision.safe_error(exc)["kind"] == "request"
+
+    class UnsafeString(Exception):
+        def __str__(self):
+            pytest.fail("Raw exception text must not be inspected")
+
+    assert gemini_vision.safe_error(UnsafeString())["kind"] == "unknown"
