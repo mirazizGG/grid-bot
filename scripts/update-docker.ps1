@@ -167,7 +167,12 @@ else:
 
 function Invoke-GridUpdateFiles {
     param([ValidateSet('prepare','install')][string]$Mode, [string]$Stage, [string]$Archive = '')
-    Invoke-GridChecked -FilePath $script:GridBotHostPython -Arguments @('-c', $script:GridUpdatePython, $Mode, $script:GridBotRoot, $Stage, $Archive) -FailureMessage 'Update source validation/copy failed. Existing runtime data was preserved.'
+    # Windows PowerShell 5.1 rewrites embedded quotes in native -c arguments.
+    # A UTF-8 file preserves the exact Python source on both supported shells.
+    $helper = Join-Path $Stage 'update-files.py'
+    Assert-GridNoStateLink -Path $helper
+    [IO.File]::WriteAllText($helper, $script:GridUpdatePython, [Text.UTF8Encoding]::new($false))
+    Invoke-GridChecked -FilePath $script:GridBotHostPython -Arguments @($helper, $Mode, $script:GridBotRoot, $Stage, $Archive) -FailureMessage 'Update source validation/copy failed. Existing runtime data was preserved.'
 }
 
 function Invoke-GridUpdateStop {
@@ -177,6 +182,7 @@ function Invoke-GridUpdateStop {
 }
 
 function Wait-GridUpdateBridgeStopped {
+    param([Parameter(Mandatory=$true)][string]$Stage)
     # stop-docker acknowledges the request before in-flight inference drains.
     # Wait for the actual lifetime lock, never terminate a PID from a file.
     $probe = @'
@@ -203,7 +209,10 @@ while True:
         raise RuntimeError('Bridge did not stop; no files replaced')
     time.sleep(0.25)
 '@
-    Invoke-GridChecked -FilePath $script:GridBotHostPython -Arguments @('-c',$probe,$script:GridBotBridge) -FailureMessage 'Windows helper is still active. Update stopped before replacing source.'
+    $helper = Join-Path $Stage 'wait-bridge.py'
+    Assert-GridNoStateLink -Path $helper
+    [IO.File]::WriteAllText($helper, $probe, [Text.UTF8Encoding]::new($false))
+    Invoke-GridChecked -FilePath $script:GridBotHostPython -Arguments @($helper,$script:GridBotBridge) -FailureMessage 'Windows helper is still active. Update stopped before replacing source.'
 }
 
 function Invoke-GridUpdateSetup {
@@ -246,7 +255,7 @@ function Invoke-GridDockerUpdate {
     Invoke-GridUpdateFiles -Mode 'prepare' -Stage $stage -Archive $archive
     Write-Host ('Prepared source backup: ' + (Join-Path $stage 'previous'))
     Invoke-GridUpdateStop
-    Wait-GridUpdateBridgeStopped
+    Wait-GridUpdateBridgeStopped -Stage $stage
     Invoke-GridUpdateFiles -Mode 'install' -Stage $stage
     Invoke-GridUpdateSetup
     if ($HasOffset) {

@@ -296,6 +296,90 @@ def test_update_rejects_redirected_destination(tmp_path):
 
 
 @pytest.mark.parametrize("shell", SHELLS or [None])
+def test_real_powershell_update_file_boundary_preserves_state_and_spaced_paths(tmp_path, shell):
+    if shell is None:
+        pytest.skip("PowerShell runtime is unavailable")
+    root = tmp_path / "existing project with spaces"
+    stage = tmp_path / "download staging with spaces"
+    archive = tmp_path / "source archive with spaces.zip"
+    root.mkdir()
+    stage.mkdir()
+    (root / "compose.yaml").write_text("original source", encoding="utf-8")
+    private_paths = [".docker-state/bridge/token", ".docker-state/data/runtime/settings.json",
+                     ".venv-host/Scripts/python.exe", "backend/.env", "backend/analyses.db",
+                     "backend/uploads/private.png", "backups/private.zip"]
+    for name in private_paths:
+        target = root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"private fixture bytes")
+    make_update_zip(archive)
+    # Exercise the actual PowerShell -> Invoke-GridChecked -> native Python
+    # boundary. Extracting the Python string and running it from Python misses
+    # Windows PowerShell 5.1's native-argument quote removal (the home failure).
+    # No subprocess/service/network boundary is mocked or called here: only the
+    # real local staging/copy function runs, against temporary fixture files.
+    command = r"""
+        . $env:GRID_UPDATE_SCRIPT
+        $script:GridBotRoot = $env:GRID_UPDATE_ROOT
+        $script:GridBotHostPython = $env:GRID_UPDATE_PYTHON
+        Invoke-GridUpdateFiles -Mode 'prepare' -Stage $env:GRID_UPDATE_STAGE -Archive $env:GRID_UPDATE_ARCHIVE
+        if ([IO.File]::ReadAllText((Join-Path $script:GridBotRoot 'compose.yaml')) -ne 'original source') { throw 'prepare changed source' }
+        Invoke-GridUpdateFiles -Mode 'install' -Stage $env:GRID_UPDATE_STAGE
+        Write-Output 'NATIVE_UPDATE_COMPLETE'
+    """
+    environment = {**os.environ, "GRID_UPDATE_SCRIPT": str(SCRIPT_DIR / "update-docker.ps1"),
+                   "GRID_UPDATE_ROOT": str(root), "GRID_UPDATE_STAGE": str(stage),
+                   "GRID_UPDATE_ARCHIVE": str(archive), "GRID_UPDATE_PYTHON": sys.executable}
+    result = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-Command", command],
+                            env=environment, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert "NATIVE_UPDATE_COMPLETE" in result.stdout
+    assert (root / "compose.yaml").read_text(encoding="utf-8") == "new compose"
+    assert (root / ".dockerignore").read_text(encoding="utf-8") == "new dotfile"
+    assert (stage / "previous/compose.yaml").read_text(encoding="utf-8") == "original source"
+    assert all((root / name).read_bytes() == b"private fixture bytes" for name in private_paths)
+
+
+def test_update_helpers_do_not_pass_program_source_through_native_c_argument():
+    script = source("update-docker.ps1")
+    files = script.split("function Invoke-GridUpdateFiles {", 1)[1].split("function Invoke-GridUpdateStop", 1)[0]
+    wait = script.split("function Wait-GridUpdateBridgeStopped {", 1)[1].split("function Invoke-GridUpdateSetup", 1)[0]
+    for function in (files, wait):
+        assert not re.search(r"-Arguments\s+@\(\s*['\"]-c['\"]", function)
+
+
+@pytest.mark.parametrize("shell", SHELLS or [None])
+def test_real_powershell_bridge_wait_uses_only_temporary_unlocked_file(tmp_path, shell):
+    if shell is None or os.name != "nt":
+        pytest.skip("Windows PowerShell and msvcrt are required for this boundary test")
+    stage = tmp_path / "wait staging with spaces"
+    bridge = tmp_path / "isolated bridge with spaces"
+    stage.mkdir()
+    bridge.mkdir()
+    lock = bridge / "bridge.lock"
+    lock.write_bytes(b"0")
+    token = bridge / "token"
+    token.write_bytes(b"fixture token must remain unchanged")
+    command = r"""
+        . $env:GRID_UPDATE_SCRIPT
+        $script:GridBotHostPython = $env:GRID_UPDATE_PYTHON
+        $script:GridBotBridge = $env:GRID_UPDATE_BRIDGE
+        Wait-GridUpdateBridgeStopped -Stage $env:GRID_UPDATE_STAGE
+        Write-Output 'NATIVE_WAIT_COMPLETE'
+    """
+    environment = {**os.environ, "GRID_UPDATE_SCRIPT": str(SCRIPT_DIR / "update-docker.ps1"),
+                   "GRID_UPDATE_PYTHON": sys.executable, "GRID_UPDATE_BRIDGE": str(bridge),
+                   "GRID_UPDATE_STAGE": str(stage)}
+    result = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-Command", command],
+                            env=environment, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert "NATIVE_WAIT_COMPLETE" in result.stdout
+    assert lock.read_bytes() == b"0"
+    assert token.read_bytes() == b"fixture token must remain unchanged"
+    assert sorted(path.name for path in bridge.iterdir()) == ["bridge.lock", "token"]
+
+
+@pytest.mark.parametrize("shell", SHELLS or [None])
 @pytest.mark.parametrize("fail_stop", [False, True])
 @pytest.mark.parametrize("clock", [False, True])
 def test_updater_orders_prepare_stop_wait_copy_setup_without_live_actions(tmp_path, shell, fail_stop, clock):
