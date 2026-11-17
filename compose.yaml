@@ -1,0 +1,37 @@
+name: grid-bot-home
+services:
+  app:
+    build:
+      context: .
+    platform: linux/amd64
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${GRID_BOT_HTTP_PORT:-8811}:8811"
+    environment:
+      GRID_BOT_CONTAINER: "1"
+      GRID_BOT_TRUST_DOCKER_GATEWAY: "1"
+      GRID_BOT_BIND_HOST: "0.0.0.0"
+      GRID_BOT_DATA_DIR: /app/data
+      GRID_BOT_BRIDGE_DIR: /app/bridge
+      FORWARDED_ALLOW_IPS: ""
+      OMP_NUM_THREADS: "2"
+      OPENBLAS_NUM_THREADS: "2"
+    volumes:
+      - ./.docker-state/data:/app/data
+      - ./.docker-state/models:/app/backend/model
+      - ./.docker-state/backups:/app/backups
+      - ./.docker-state/bridge:/app/bridge
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,noexec,size=128m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8811/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3

@@ -5,7 +5,8 @@ natijani bazaga yozadi va xulosani chiqaradi. Mantiq backend/evaluator.py da
 Ishga tushirish (MT5 terminali ochiq va hisobga kirilgan bo'lishi kerak):
     python training/evaluate_signals.py [--horizon-hours 24] [--utc-offset 3]
 
---utc-offset faqat server farqi saqlanmagan eski yozuvlar uchun kerak.
+Saqlangan rejalar 24 soat va UTC+0 bilan baholanadi; parametrlar bu
+shartlarni o'zgartira olmaydi. Eski yakuniy natijalar legacy bo'lib qoladi.
 """
 import argparse
 import os
@@ -26,7 +27,7 @@ def main():
 
     try:
         res = evaluator.evaluate_pending(args.horizon_hours, args.utc_offset)
-    except RuntimeError as exc:
+    except (RuntimeError, ValueError) as exc:
         sys.exit(str(exc))
     print(f"Tekshirildi: {res['checked']}  {res['by_outcome']}\n")
 

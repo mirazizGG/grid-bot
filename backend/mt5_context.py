@@ -10,6 +10,9 @@ uchun bu muhim."""
 import time
 import threading
 import math
+from types import SimpleNamespace
+
+import bridge_client
 
 import numpy as np
 import pandas as pd
@@ -34,6 +37,11 @@ if mt5 is not None:
 
 ATR_PERIOD = 14
 MAX_QUOTE_AGE_SECONDS = 60
+TIMEFRAME_SECONDS = {"M1": 60, "M5": 300, "M15": 900, "M30": 1800,
+                     "H1": 3600, "H4": 14400, "D1": 86400}
+# No broker session calendar is available. Allow weekends/holiday closures,
+# but do not accept an arbitrarily old cache just because quotes resumed.
+MAX_HISTORY_SESSION_GAP_SECONDS = 7 * 86400
 # training/backtest.py orqali tekshirilgan: 2:1 nisbat (ishonch>=0.55 bilan
 # birga) out-of-sample'da eng barqaror ijobiy expectancy berdi (+0.095R/savdo).
 TP_ATR_MULT = 2.0
@@ -267,7 +275,33 @@ def _server_utc_offset_hours(tick_time: int) -> int | None:
 
 def get_context(symbol: str, timeframe_name: str, n_bars: int = 100) -> dict | None:
     with MT5_LOCK:
+        if bridge_client.enabled():
+            try:
+                if timeframe_name not in TIMEFRAME_SECONDS or type(n_bars) is not int or not 55 <= n_bars <= 1000:
+                    return None
+                result = bridge_client.request("context", {"symbol": symbol, "timeframe": timeframe_name, "n_bars": n_bars})
+                if result is None:
+                    return None
+                if not isinstance(result, dict) or result.get("symbol") != symbol or result.get("timeframe") != timeframe_name:
+                    raise bridge_client.BridgeError("Host bridge konteksti so'ralgan bozorga mos emas")
+                quote = _bridge_quote(result)
+                if quote is None or not all(math.isfinite(float(value)) for value in to_feature_vector(result)) or result["atr_14"] <= 0:
+                    raise bridge_client.BridgeError("Host bridge konteksti yaroqsiz yoki eskirgan")
+                return {**result, **quote}
+            except (bridge_client.BridgeError, ValueError, TypeError, KeyError, OverflowError) as exc:
+                bridge_client.record_error(str(exc))
+                return None
         return _get_context(symbol, timeframe_name, n_bars)
+
+
+def _bridge_quote(result):
+    if not isinstance(result, dict):
+        return None
+    digits = result.get("digits")
+    if type(digits) is not int or not 0 <= digits <= 12:
+        return None
+    return _checked_quote(SimpleNamespace(bid=result["bid"], ask=result["ask"], time=result["tick_time"]),
+                          SimpleNamespace(digits=digits))
 
 
 def _checked_quote(tick, info) -> dict | None:
@@ -287,6 +321,18 @@ def _checked_quote(tick, info) -> dict | None:
 def get_quote(symbol: str) -> dict | None:
     """Read and validate a fresh quote under the shared MT5 lock."""
     with MT5_LOCK:
+        if bridge_client.enabled():
+            try:
+                result = bridge_client.request("quote", {"symbol": symbol}, timeout=3)
+                if result is None:
+                    return None
+                quote = _bridge_quote(result)
+                if quote is None:
+                    raise bridge_client.BridgeError("Host bridge narxi yaroqsiz yoki eskirgan")
+                return quote
+            except (bridge_client.BridgeError, ValueError, TypeError, KeyError, OverflowError) as exc:
+                bridge_client.record_error(str(exc))
+                return None
         if mt5 is None or not mt5.initialize():
             return None
         try:
@@ -295,6 +341,28 @@ def get_quote(symbol: str) -> dict | None:
             return _checked_quote(mt5.symbol_info_tick(symbol), mt5.symbol_info(symbol))
         finally:
             mt5.shutdown()
+
+
+def _checked_closed_rates(rates, timeframe_name: str, tick_time: float):
+    """Validate a snapshot containing the forming bar, then return closed bars.
+
+    A recent quote alone cannot establish that the terminal's candle cache is
+    current. Its forming bar must cover that quote's time. Completed bars may
+    precede a weekend/holiday, so bounded session gaps are allowed rather than
+    requiring the preceding bar to be exactly one timeframe old.
+    """
+    if rates is None or len(rates) < 56:  # 55 closed bars plus the forming bar
+        return None
+    seconds = TIMEFRAME_SECONDS[timeframe_name]
+    times = rates["time"].astype(np.float64)
+    if not np.all(np.isfinite(times)) or np.any(times <= 0):
+        return None
+    gaps = np.diff(times)
+    if (np.any(gaps <= 0) or
+            np.any(gaps > max(MAX_HISTORY_SESSION_GAP_SECONDS, seconds)) or
+            times[-1] > tick_time + 5 or tick_time - times[-1] > seconds + 5):
+        return None
+    return rates[:-1]
 
 
 def _get_context(symbol: str, timeframe_name: str, n_bars: int = 100) -> dict | None:
@@ -310,12 +378,16 @@ def _get_context(symbol: str, timeframe_name: str, n_bars: int = 100) -> dict | 
         if not mt5.symbol_select(symbol, True):
             return None
 
-        # O'qitishda yakunlangan shamlar ishlatilgan; joriy tugallanmagan shamni o'tkazamiz.
-        rates = mt5.copy_rates_from_pos(symbol, TIMEFRAME_MAP[timeframe_name], 1, n_bars)
+        # Read one snapshot including the forming bar to verify cache freshness;
+        # the forming bar is excluded before computing any model indicators.
+        rates = mt5.copy_rates_from_pos(symbol, TIMEFRAME_MAP[timeframe_name], 0, n_bars + 1)
         tick = mt5.symbol_info_tick(symbol)
         info = mt5.symbol_info(symbol)
         quote = _checked_quote(tick, info)
-        if rates is None or len(rates) < 55 or quote is None:
+        if quote is None:
+            return None
+        rates = _checked_closed_rates(rates, timeframe_name, quote["tick_time"])
+        if rates is None:
             return None
 
         closes = rates["close"].astype(np.float64)
@@ -343,8 +415,9 @@ def _get_context(symbol: str, timeframe_name: str, n_bars: int = 100) -> dict | 
         raw["swings"] = find_swings(highs, lows)
         higher = {}
         for tf_name in HIGHER_TIMEFRAMES.get(timeframe_name, []):
-            hr = mt5.copy_rates_from_pos(symbol, TIMEFRAME_MAP[tf_name], 1, n_bars)
-            if hr is not None and len(hr) >= 55:
+            hr = mt5.copy_rates_from_pos(symbol, TIMEFRAME_MAP[tf_name], 0, n_bars + 1)
+            hr = _checked_closed_rates(hr, tf_name, quote["tick_time"])
+            if hr is not None:
                 summary = trend_summary(hr["high"].astype(np.float64), hr["low"].astype(np.float64),
                                         hr["close"].astype(np.float64))
                 if summary:

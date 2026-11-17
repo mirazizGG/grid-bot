@@ -1,12 +1,11 @@
 """Custom model va Gemini vision natijalarini birlashtirib yakuniy qaror chiqaradi.
 
-Custom model test aniqligi past (~41%, tasodifiy daraja -- 33%) bo'lgani uchun u
-yakuniy qarorni yolg'iz belgilamaydi -- faqat Gemini'ning fikrini tasdiqlaydi yoki
+Custom modelning tarixiy aniqligi mustaqil tasdiqlanmagan. U
+yakuniy qarorni yolg'iz belgilamaydi -- Gemini'ning fikrini tasdiqlaydi yoki
 unga shubha uyg'otadi. Gemini asosiy manba hisoblanadi.
 
-`training/backtest.py` orqali tekshirilgan: custom model ishonchi past bo'lganda
-(<0.55) real expectancy nolga yaqin/manfiy, shuning uchun past ishonchli signal
-Hold'ga tushiriladi -- kamroq, lekin sifatliroq signal berish strategiyasi.
+Custom modelning avvalgi tajribadan olingan filtri qo'llanadi. Ushbu chegara
+mustaqil foydalilikni yoki baholarning kalibrlanganligini tasdiqlamaydi.
 """
 from config import (
     VISION_AI_WEIGHT,
@@ -14,9 +13,13 @@ from config import (
     MIN_CUSTOM_MODEL_CONFIDENCE,
     MIN_VISION_OVERRIDE_CONFIDENCE,
 )
+from config import get_settings
 
 
-def compute_consensus(custom: dict, vision_ai: dict) -> dict:
+def compute_consensus(custom: dict, vision_ai: dict, settings: dict | None = None) -> dict:
+    settings = settings or get_settings()
+    min_custom = settings["min_custom_confidence"]
+    min_override = settings["min_vision_override_confidence"]
     custom_signal = custom["signal"]
     vision_signal = vision_ai["signal"]
 
@@ -25,28 +28,28 @@ def compute_consensus(custom: dict, vision_ai: dict) -> dict:
         agreement = custom_signal == "Hold"
         note = "Gemini Hold deb hisobladi -- yakuniy qaror ham Hold."
     elif custom_signal == vision_signal:
-        if custom["confidence"] < MIN_CUSTOM_MODEL_CONFIDENCE:
+        if custom["confidence"] < min_custom:
             final_signal = "Hold"
             agreement = False
             note = (
                 f"Ikkala model {vision_signal} yo'nalishini ko'rsatdi, lekin custom model "
-                f"ishonchi past ({custom['confidence']:.0%} < {MIN_CUSTOM_MODEL_CONFIDENCE:.0%}) "
-                "-- backtest bo'yicha bu holatda signal ishonchsiz, shuning uchun Hold."
+                f"ishonchi past ({custom['confidence']:.0%} < {min_custom:.0%}) "
+                "-- belgilangan filtr bo'yicha Hold."
             )
         else:
             final_signal = vision_signal
             agreement = True
-            note = "Ikkala model ham bir xil yo'nalishni ko'rsatdi va custom model ishonchi yetarli -- signal ishonchli."
+            note = "Ikkala model bir xil yo'nalishni ko'rsatdi va custom model bahosi filtrdan o'tdi. Bu natija muvaffaqiyatni kafolatlamaydi."
     elif custom_signal == "Hold":
         final_signal = vision_signal
         agreement = False
-        note = "Custom model Hold, Gemini esa signal berdi -- Gemini'ga tayanildi, ishonch o'rtacha."
-    elif vision_ai["confidence"] >= MIN_VISION_OVERRIDE_CONFIDENCE:
+        note = "Custom model Hold, Gemini esa signal berdi -- Gemini yo'nalishi olindi."
+    elif vision_ai["confidence"] >= min_override:
         final_signal = vision_signal
         agreement = False
         note = (
             f"Custom model qarama-qarshi yo'nalish berdi (Sell/Buy ziddiyat), lekin Gemini ishonchi "
-            f"yetarlicha yuqori ({vision_ai['confidence']:.0%} >= {MIN_VISION_OVERRIDE_CONFIDENCE:.0%}) "
+            f"yetarlicha yuqori ({vision_ai['confidence']:.0%} >= {min_override:.0%}) "
             "-- Gemini signaliga tayanildi, ehtiyot bo'ling."
         )
     else:
@@ -54,18 +57,18 @@ def compute_consensus(custom: dict, vision_ai: dict) -> dict:
         agreement = False
         note = (
             "Ikkala model qarama-qarshi yo'nalish berdi (Buy vs Sell) va Gemini ishonchi ham "
-            f"yetarli emas ({vision_ai['confidence']:.0%} < {MIN_VISION_OVERRIDE_CONFIDENCE:.0%}) "
+            f"yetarli emas ({vision_ai['confidence']:.0%} < {min_override:.0%}) "
             "-- xavfsizlik uchun Hold."
         )
 
-    if agreement:
-        final_confidence = VISION_AI_WEIGHT * vision_ai["confidence"] + CUSTOM_MODEL_WEIGHT * custom["confidence"]
-    elif final_signal == "Hold":
+    if final_signal == "Hold":
         final_confidence = None  # Hold uchun ishonch ma'nosiz (avval qattiq 0.5 edi) -- dashboard "—" ko'rsatadi
+    elif agreement:
+        final_confidence = settings["vision_ai_weight"] * vision_ai["confidence"] + settings["custom_model_weight"] * custom["confidence"]
     else:
         final_confidence = vision_ai["confidence"] * 0.85  # kelishmagan, lekin Gemini ishonchi yuqori bo'lgani uchun kamroq pasaytiramiz
 
-    entry_price = vision_ai.get("entry_price")
+    entry_price = vision_ai.get("entry_price") if final_signal != "Hold" else None
     tp_price = vision_ai.get("tp_price") if final_signal != "Hold" else None
     sl_price = vision_ai.get("sl_price") if final_signal != "Hold" else None
     entry_type = vision_ai.get("entry_type") if final_signal != "Hold" else None

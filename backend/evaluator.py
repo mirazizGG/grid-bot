@@ -6,28 +6,42 @@ natijani (TP urildimi / SL urildimi) bazaga yozadi.
   bilan "agar signal berilganida" nima bo'lardi -- gipotetik ("hold-gipotetik").
   Shu bilan Hold filtri foyda berayotganini tekshirish mumkin.
 
-1-minutlik barlar, TP=+2R / SL=-1R. Bir barda ham TP, ham SL urilsa
-konservativ ravishda SL hisoblanadi. Spred alohida hisobga olinmaydi.
+Bid/ask ticklar bo‘yicha birinchi TP yoki SL aniqlanadi. Ma’lumotdagi
+uzilishlar aniqlansa NO_DATA qaytariladi. Komissiya va slippage hisoblanmaydi.
 """
 import datetime as dt
 import json
 import math
+import bridge_client
 
 try:
     import MetaTrader5 as mt5
 except ImportError:
     mt5 = None
 
-from db import SessionLocal, Analysis
+from db import SessionLocal, Analysis, patch_analysis_result
 from mt5_context import compute_trade_levels, TP_ATR_MULT, SL_ATR_MULT, MT5_LOCK
 
 DEFAULT_HORIZON_HOURS = 24.0
 FINAL_OUTCOMES = ("TP", "SL", "EXPIRED", "SKIP")
-MODEL_COMPARISON_VERSION = 1
+MODEL_COMPARISON_VERSION = 3
+OUTCOME_VERSION = 5
+MAX_TICK_GAP_SECONDS = 60
+TICK_CHUNK_MINUTES = 5
+TIMEFRAME_MINUTES = {"M1": 1, "M5": 5, "M15": 15, "M30": 30, "H1": 60, "H4": 240, "D1": 1440}
 
 
-def create_model_comparison(ctx, quote, vision, qwen):
-    """Freeze identical hypothetical 2:1 ATR plans at publication, not model price guesses."""
+def _tick_source():
+    return bridge_client.MT5Proxy() if bridge_client.enabled() else mt5
+
+
+def evaluation_parameters():
+    return {"horizon_hours": DEFAULT_HORIZON_HOURS, "utc_offset": 0}
+
+
+def create_model_comparison(ctx, quote, vision, qwen, timestamp=None):
+    """Freeze a hypothetical 2:1 ATR plan when each model's result is available."""
+    timestamp = timestamp or dt.datetime.utcnow()
     plans = {}
     for name, model in (("gemini", vision), ("qwen", qwen)):
         signal = model.get("signal")
@@ -44,7 +58,7 @@ def create_model_comparison(ctx, quote, vision, qwen):
                 plan["reason"] = "Tahlil davomida narx o'zgargan"
             else:
                 plan.update(compute_trade_levels({**ctx, **quote}, signal))
-                plan.update(outcome=None, horizon_hours=DEFAULT_HORIZON_HOURS, utc_offset=0)
+                plan.update(outcome=None, **evaluation_parameters(), timestamp=timestamp.isoformat() + "Z")
         plans[name] = plan
     return plans
 
@@ -63,29 +77,68 @@ def simulate(direction: str, tp: float, sl: float, highs, lows) -> str:
     return "OPEN"
 
 
+def _tick_path_outcome(symbol, direction, tp, sl, start, end):
+    """Replay quotes in bounded chunks; missing/invalid quote intervals are unknown.
+
+    Gap detection cannot prove that a broker delivered every tick; it rejects
+    visible holes and avoids treating sparse/missing history as a successful trade.
+    """
+    if direction not in ("Buy", "Sell") or end <= start:
+        return "NO_DATA"
+    utc = lambda value: value.replace(tzinfo=dt.timezone.utc)
+    to_ms = lambda value: utc(value).timestamp() * 1000
+    gap_ms = MAX_TICK_GAP_SECONDS * 1000
+    previous_ms = to_ms(start)
+    cursor = start
+    seen = False
+    pending_ms, pending_hit = None, None
+    while cursor < end:
+        chunk_end = min(cursor + dt.timedelta(minutes=TICK_CHUNK_MINUTES), end)
+        source = _tick_source()
+        try:
+            ticks = source.copy_ticks_range(symbol, utc(cursor), utc(chunk_end), source.COPY_TICKS_INFO)
+        except bridge_client.BridgeError as exc:
+            bridge_client.record_error(str(exc))
+            return "NO_DATA"
+        if ticks is None:
+            return "NO_DATA"
+        for tick in ticks:
+            tick_ms = int(tick["time_msc"])
+            # copy_ticks_range includes its upper bound: each tick belongs to
+            # one chunk only, and a quote at the horizon is not post-publication.
+            if not to_ms(cursor) <= tick_ms < to_ms(chunk_end):
+                continue
+            if tick_ms < previous_ms:
+                return "NO_DATA"
+            if pending_ms is not None and tick_ms > pending_ms:
+                return pending_hit
+            if tick_ms - previous_ms > gap_ms:
+                return "NO_DATA"
+            bid, ask = float(tick["bid"]), float(tick["ask"])
+            if not math.isfinite(bid) or not math.isfinite(ask) or bid <= 0 or ask < bid:
+                return "NO_DATA"
+            price = bid if direction == "Buy" else ask
+            hit_sl = (direction == "Buy" and price <= sl) or (direction == "Sell" and price >= sl)
+            hit_tp = (direction == "Buy" and price >= tp) or (direction == "Sell" and price <= tp)
+            if hit_sl or hit_tp:
+                # When ticks share a millisecond, their order is not reliable.
+                pending_ms = tick_ms
+                pending_hit = "SL" if hit_sl or pending_hit == "SL" else "TP"
+            previous_ms = tick_ms
+            seen = True
+        if pending_hit is not None:
+            return pending_hit
+        if to_ms(chunk_end) - previous_ms > gap_ms:
+            return "NO_DATA"
+        cursor = chunk_end
+    return "OPEN" if seen else "NO_DATA"
+
+
 def _partial_minute_outcome(symbol, direction, tp, sl, start, end):
-    """Use real bid/ask ticks after publication; never infer from pre-signal OHLC."""
+    """Compatibility helper for a partial interval, using the same tick rules."""
     if end <= start:
         return "OPEN"
-    utc = lambda value: value.replace(tzinfo=dt.timezone.utc)
-    ticks = mt5.copy_ticks_range(symbol, utc(start), utc(end), mt5.COPY_TICKS_INFO)
-    if ticks is None or len(ticks) == 0:
-        return "NO_DATA"
-    start_ms, end_ms = utc(start).timestamp() * 1000, utc(end).timestamp() * 1000
-    seen = False
-    for tick in ticks:
-        tick_ms = int(tick["time_msc"])
-        if not start_ms <= tick_ms < end_ms:
-            continue
-        price = float(tick["bid"] if direction == "Buy" else tick["ask"])
-        if not math.isfinite(price) or price <= 0:
-            continue
-        seen = True
-        if (direction == "Buy" and price <= sl) or (direction == "Sell" and price >= sl):
-            return "SL"
-        if (direction == "Buy" and price >= tp) or (direction == "Sell" and price <= tp):
-            return "TP"
-    return "OPEN" if seen else "NO_DATA"
+    return _tick_path_outcome(symbol, direction, tp, sl, start, end)
 
 
 def _plan(row: Analysis, data: dict):
@@ -93,6 +146,12 @@ def _plan(row: Analysis, data: dict):
     ctx = data.get("market_context")
     if not ctx:
         return None, "MT5 konteksti yo'q"
+    age = data.get("image_age_minutes")
+    timeframe = ctx.get("timeframe", "M15")
+    if (data.get("image_freshness") == "stale_file_timestamp" or
+            (isinstance(age, (float, int)) and math.isfinite(age) and
+             age > max(10, TIMEFRAME_MINUTES.get(timeframe, 15)))):
+        return None, "Rasm eski bo'lishi mumkin"
     plan_type = data.get("evaluation_plan")
     if row.final_signal in ("Buy", "Sell"):
         if plan_type != "market":
@@ -115,89 +174,91 @@ def evaluate_pending(horizon_hours: float = DEFAULT_HORIZON_HOURS, utc_offset: i
 def _evaluate_price_path(symbol, direction, tp, sl, timestamp, now, horizon_hours, utc_offset):
     if not all(isinstance(x, (int, float)) and math.isfinite(x) for x in (tp, sl)):
         return "NO_DATA"
+    if direction not in ("Buy", "Sell") or (direction == "Buy" and tp <= sl) or (direction == "Sell" and tp >= sl):
+        return "NO_DATA"
     signal_time = timestamp + dt.timedelta(hours=utc_offset or 0)
-    start = signal_time.replace(second=0, microsecond=0)
-    if start < signal_time:
-        start += dt.timedelta(minutes=1)
     end = min(signal_time + dt.timedelta(hours=horizon_hours), now + dt.timedelta(hours=utc_offset or 0))
-    first = _partial_minute_outcome(symbol, direction, tp, sl, signal_time, min(start, end))
-    if first != "OPEN":
-        return first
-    window_over = now >= timestamp + dt.timedelta(hours=horizon_hours)
-    if end <= start:
-        return "EXPIRED" if window_over else "OPEN"
-    epoch = lambda value: int(value.replace(tzinfo=dt.timezone.utc).timestamp())
-    bars = mt5.copy_rates_range(symbol, mt5.TIMEFRAME_M1, epoch(start), epoch(end))
-    if bars is None or len(bars) == 0:
-        return "NO_DATA"
-    complete_end = epoch(end.replace(second=0, microsecond=0))
-    usable = bars[bars["time"] + 60 <= complete_end]
-    expected = epoch(start)
-    prefix = []
-    for bar in usable:
-        if int(bar["time"]) != expected:
-            break
-        prefix.append(bar)
-        expected += 60
-    outcome = simulate(direction, tp, sl, (b["high"] for b in prefix), (b["low"] for b in prefix))
-    if outcome == "OPEN" and expected < complete_end:
-        return "NO_DATA"
-    if outcome == "OPEN" and window_over:
-        tail_start = end.replace(second=0, microsecond=0)
-        if end > tail_start:
-            tail = _partial_minute_outcome(symbol, direction, tp, sl, tail_start, end)
-            if tail != "OPEN":
-                return tail
+    if end <= signal_time:
+        return "OPEN"
+    result = _tick_path_outcome(symbol, direction, tp, sl, signal_time, end)
+    if result == "OPEN" and now >= timestamp + dt.timedelta(hours=horizon_hours):
         return "EXPIRED"
-    return outcome
+    return result
 
 
 def _evaluate_pending(horizon_hours: float, utc_offset: int | None) -> dict:
     """Hali yakunlanmagan (outcome=None/OPEN/NO_DATA) tahlillarni baholab, bazaga yozadi.
 
-    MT5 Python API bar vaqtlarini UTC qaytaradi. utc_offset faqat alohida
-    tekshirilgan, noodatiy tarix uchun qo'lda tuzatish sifatida ishlatiladi."""
-    if not math.isfinite(horizon_hours) or horizon_hours <= 0:
+    Saqlangan rejalar o'zgarmas 24 soatlik muddat va UTC+0 bo'yicha baholanadi;
+    so'rov parametrlari ushbu shartlarni o'zgartirmaydi."""
+    if isinstance(horizon_hours, bool) or not math.isfinite(horizon_hours) or horizon_hours <= 0:
         raise ValueError("Kuzatuv muddati musbat son bo'lishi kerak")
-    if mt5 is None or not mt5.initialize():
+    # Published plans have one fixed policy. Request parameters must never
+    # silently reinterpret or finalize the same signal under another policy.
+    if horizon_hours != DEFAULT_HORIZON_HOURS or utc_offset not in (None, 0):
+        raise ValueError("Saqlangan rejalar 24 soat va UTC+0 bo'yicha baholanadi; so'rov bu shartlarni o'zgartira olmaydi")
+    source = _tick_source()
+    try:
+        connected = source is not None and source.initialize()
+    except bridge_client.BridgeError as exc:
+        bridge_client.record_error(str(exc))
+        raise RuntimeError("Windows host bridge yoki MT5 bilan aloqa yo'q") from exc
+    if not connected:
         raise RuntimeError("MT5 terminaliga ulanib bo'lmadi (terminal ochiqmi?)")
 
     session = SessionLocal()
     now = dt.datetime.utcnow()
     counts: dict[str, int] = {}
     model_checked = 0
+    pending_patches = []
     try:
         rows = session.query(Analysis).all()
         for row in rows:
             data = json.loads(row.raw_result)
+            patches = {}
             if row.outcome not in FINAL_OUTCOMES:
                 plan, _ = _plan(row, data)
                 if plan is None:
                     row.outcome, row.outcome_kind = "SKIP", None
                 else:
                     kind, direction, _entry, tp, sl = plan
+                    parameters = data.get("evaluation_parameters")
+                    if parameters is None:
+                        # Old pending plans can be evaluated under the explicit
+                        # current policy. Old finalized outcomes stay legacy.
+                        parameters = evaluation_parameters()
+                        patches["$.evaluation_parameters"] = parameters
+                    if parameters != evaluation_parameters():
+                        raise ValueError("Saqlangan signalning baholash shartlari joriy siyosatga mos emas")
                     row.outcome = _evaluate_price_path(data["market_context"]["symbol"], direction, tp, sl,
-                                                       row.timestamp, now, horizon_hours, utc_offset)
+                                                       row.timestamp, now, parameters["horizon_hours"], parameters["utc_offset"])
                     row.outcome_kind = kind
                 row.outcome_checked_at = now
-                row.outcome_version = 3
+                row.outcome_version = OUTCOME_VERSION
                 counts[row.outcome] = counts.get(row.outcome, 0) + 1
-            changed = False
-            for model_plan in data.get("model_comparison", {}).values():
+            for name, model_plan in data.get("model_comparison", {}).items():
                 if model_plan.get("version") != MODEL_COMPARISON_VERSION or model_plan.get("outcome") in FINAL_OUTCOMES:
                     continue
-                model_plan["outcome"] = _evaluate_price_path(data["market_context"]["symbol"], model_plan["signal"],
-                    model_plan.get("tp_price"), model_plan.get("sl_price"), row.timestamp, now,
+                published = dt.datetime.fromisoformat(model_plan["timestamp"].replace("Z", "+00:00"))
+                published = published.astimezone(dt.timezone.utc).replace(tzinfo=None)
+                outcome = _evaluate_price_path(data["market_context"]["symbol"], model_plan["signal"],
+                    model_plan.get("tp_price"), model_plan.get("sl_price"), published, now,
                     model_plan["horizon_hours"], model_plan["utc_offset"])
-                model_plan["checked_at"] = now.isoformat() + "Z"
-                changed = True
+                patches[f"$.model_comparison.{name}.outcome"] = outcome
+                patches[f"$.model_comparison.{name}.checked_at"] = now.isoformat() + "Z"
                 model_checked += 1
-            if changed:
-                row.raw_result = json.dumps(data, ensure_ascii=False)
+            if patches:
+                pending_patches.append((row.id, patches))
+        # No writes or additional ORM queries occur during tick replay above.
+        # Applying a JSON patch also autoflushes dirty outcome columns, so defer
+        # every patch until all slow MT5 work is finished. This keeps SQLite's
+        # writer lock out of replay while retaining atomic path-level updates.
+        for record_id, patches in pending_patches:
+            patch_analysis_result(session, record_id, patches)
         session.commit()
     finally:
         session.close()
-        mt5.shutdown()
+        source.shutdown()
     return {"checked": sum(counts.values()), "by_outcome": counts, "model_checked": model_checked}
 
 
@@ -222,7 +283,7 @@ def summarize(session) -> dict:
     rr = TP_ATR_MULT / SL_ATR_MULT
     out = {}
     for kind in ("signal", "hold-gipotetik"):
-        rows = session.query(Analysis.outcome).filter(Analysis.outcome_kind == kind, Analysis.outcome_version == 3).all()
+        rows = session.query(Analysis.outcome).filter(Analysis.outcome_kind == kind, Analysis.outcome_version == OUTCOME_VERSION).all()
         outcomes = [r[0] for r in rows]
         tp, sl = outcomes.count("TP"), outcomes.count("SL")
         n = tp + sl
@@ -238,6 +299,6 @@ def summarize(session) -> dict:
             "expired": outcomes.count("EXPIRED"),
             "no_data": outcomes.count("NO_DATA"),
             "legacy": session.query(Analysis).filter(Analysis.outcome_kind == kind,
-                       (Analysis.outcome_version.is_(None)) | (Analysis.outcome_version != 3)).count(),
+                       (Analysis.outcome_version.is_(None)) | (Analysis.outcome_version != OUTCOME_VERSION)).count(),
         }
     return out

@@ -5,12 +5,18 @@ Ishga tushirishdan oldin MetaTrader5 terminali ochiq va hisobga kirilgan bo'lish
 import os
 import sys
 
-import MetaTrader5 as mt5
+try:
+    import MetaTrader5 as mt5
+except ImportError:
+    mt5 = None
 import pandas as pd
 
-from config import SYMBOL, TIMEFRAME_NAME, HISTORY_BARS, RAW_DATA_PATH
+try:
+    from .config import SYMBOL, TIMEFRAME_NAME, HISTORY_BARS, RAW_DATA_PATH
+except ImportError:
+    from config import SYMBOL, TIMEFRAME_NAME, HISTORY_BARS, RAW_DATA_PATH
 
-TIMEFRAME_MAP = {
+TIMEFRAME_MAP = {} if mt5 is None else {
     "M1": mt5.TIMEFRAME_M1,
     "M5": mt5.TIMEFRAME_M5,
     "M15": mt5.TIMEFRAME_M15,
@@ -22,6 +28,8 @@ TIMEFRAME_MAP = {
 
 
 def fetch_ohlc(symbol: str, timeframe_name: str, n_bars: int) -> pd.DataFrame:
+    if mt5 is None:
+        raise RuntimeError("Tarixni yuklash uchun Windows hostida MetaTrader5 moduli kerak; mavjud parquet'larni qayta label'lash MT5 talab qilmaydi")
     if not mt5.initialize():
         raise RuntimeError(f"MT5 initialize() muvaffaqiyatsiz: {mt5.last_error()}")
 

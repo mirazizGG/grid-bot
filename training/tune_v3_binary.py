@@ -8,7 +8,7 @@ tashlab), qaror chegarasi aniqroq bo'lishi mumkin. Inference paytida esa
 predict_proba() eng yuqori ehtimoli past bo'lsa (ya'ni ikkala klass ham
 unchalik ishonch bilan aytilmasa) -- Hold deb belgilanadi.
 
-Baseline bilan solishtirish uchun: xuddi shu TEST qatorlarida (Hold
+Baseline bilan solishtirish uchun: xuddi shu VAL qatorlarida (Hold
 qatorlari ham kiradi!) baholanadi -- ya'ni "modelning umumiy 3 klassni
 farqlash qobiliyati" xolisona solishtiriladi.
 """
@@ -34,7 +34,7 @@ def main():
     X_cols = mt5_context.FEATURE_NAMES
 
     train_mask = dataset["split"] == "train"
-    test_mask = dataset["split"] == "test"
+    val_mask = dataset["split"] == "val"
 
     # faqat Buy/Sell qatorlarida o'qitish
     bs_train_mask = train_mask & dataset["label"].isin(["Buy", "Sell"])
@@ -46,22 +46,22 @@ def main():
     model.fit(X_train_bs, y_train_bs)
 
     # Hold uchun eshik: eng yuqori class ehtimoli shu qiymatdan past bo'lsa -> Hold
-    X_test = dataset[test_mask][X_cols]
-    y_test = dataset[test_mask]["label"]
-    proba = model.predict_proba(X_test)  # [P(Buy), P(Sell)]
+    X_val = dataset[val_mask][X_cols]
+    y_val = dataset[val_mask]["label"]
+    proba = model.predict_proba(X_val)  # [P(Buy), P(Sell)]
     max_proba = proba.max(axis=1)
     raw_pred = model.classes_[proba.argmax(axis=1)]
 
     for hold_threshold in [0.50, 0.55, 0.60, 0.65, 0.70]:
         pred = np.where(max_proba >= hold_threshold, raw_pred, "Hold")
-        acc = accuracy_score(y_test, pred)
+        acc = accuracy_score(y_val, pred)
 
-        sub = dataset[test_mask].copy()
+        sub = dataset[val_mask].copy()
         sub["pred"] = pred
         xau_m15 = sub[(sub["symbol"] == "XAUUSD") & (sub["timeframe"] == "M15")]
         xau_acc = accuracy_score(xau_m15["label"], xau_m15["pred"])
         hold_frac = (pred == "Hold").mean()
-        print(f"threshold={hold_threshold:.2f}  TEST overall={acc:.3f}  XAUUSD M15={xau_acc:.3f}  Hold ulushi={hold_frac:.2f}")
+        print(f"threshold={hold_threshold:.2f}  VAL overall={acc:.3f}  XAUUSD M15={xau_acc:.3f}  Hold ulushi={hold_frac:.2f}")
 
 
 if __name__ == "__main__":

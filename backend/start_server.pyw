@@ -16,22 +16,21 @@ def listening(port):
 
 
 def main():
-    ollama_app = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Ollama" / "ollama app.exe"
-    if ollama_app.is_file() and not listening(11434):
-        subprocess.Popen([str(ollama_app), "--hide", "--fast-startup"], cwd=str(ollama_app.parent),
-                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), close_fds=True)
     # If any application owns the port, never start a duplicate or terminate it.
     if listening(8811):
         return
     python = Path(sys.executable).with_name("python.exe")
+    environment = os.environ.copy()
+    environment.update(GRID_BOT_SUPERVISED="1", GRID_BOT_SUPERVISOR_PID=str(os.getpid()))
     with LOG.open("ab") as log:
-        subprocess.Popen(
-            [str(python), "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", "8811"],
-            cwd=str(HERE), stdin=subprocess.DEVNULL, stdout=log, stderr=log,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            close_fds=True,
-        )
+        while True:
+            child = subprocess.Popen(
+                [str(python), "-c", "from control_runtime import run_supervised_server; run_supervised_server()"],
+                cwd=str(HERE), env=environment, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), close_fds=True, shell=False,
+            )
+            if child.wait() != 75 or listening(8811):
+                return
 
 
 if __name__ == "__main__":

@@ -17,10 +17,10 @@ import tempfile
 import zipfile
 
 import db  # noqa: F401  -- jadval/ustunlar mavjudligini ta'minlaydi (yangi kompyuterda ham)
-from config import DB_PATH
+from config import DB_PATH, UPLOAD_DIR as CONFIG_UPLOAD_DIR
 
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
-UPLOAD_DIR = os.path.join(BACKEND_DIR, "uploads")
+UPLOAD_DIR = str(CONFIG_UPLOAD_DIR)
 DEFAULT_BACKUP_DIR = os.path.join(BACKEND_DIR, "..", "backups")
 DB_NAME_IN_ZIP = "analyses.db"
 UPLOADS_PREFIX = "uploads/"

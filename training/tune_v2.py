@@ -28,9 +28,6 @@ sys.path.insert(0, _THIS_DIR)
 import mt5_context  # noqa: E402
 from train_numeric_model import COMBINED_LABELED, build_dataset  # noqa: E402
 
-BASELINE_XAUUSD_M15 = 0.46
-
-
 def xau_m15_acc(model, dataset, mask):
     sub = dataset[mask]
     sub = sub[(sub["symbol"] == "XAUUSD") & (sub["timeframe"] == "M15")]
@@ -40,15 +37,13 @@ def xau_m15_acc(model, dataset, mask):
     return accuracy_score(sub["label"], preds)
 
 
-def report(name, model, dataset, val_mask, test_mask):
+def report(name, model, dataset, val_mask):
     val_acc = accuracy_score(dataset[val_mask]["label"], model.predict(dataset[val_mask][mt5_context.FEATURE_NAMES]))
-    test_acc = accuracy_score(dataset[test_mask]["label"], model.predict(dataset[test_mask][mt5_context.FEATURE_NAMES]))
     xau_val = xau_m15_acc(model, dataset, val_mask)
-    xau_test = xau_m15_acc(model, dataset, test_mask)
     print(f"\n--- {name} ---")
-    print(f"  VAL overall={val_acc:.3f}  TEST overall={test_acc:.3f}")
-    print(f"  XAUUSD M15: VAL={xau_val:.3f}  TEST={xau_test:.3f}  (baseline TEST={BASELINE_XAUUSD_M15:.2f})")
-    return xau_test
+    print(f"  VAL overall={val_acc:.3f}")
+    print(f"  XAUUSD M15 VAL={xau_val:.3f}")
+    return xau_val
 
 
 def main():
@@ -60,7 +55,6 @@ def main():
     X_cols = mt5_context.FEATURE_NAMES
     train_mask = dataset["split"] == "train"
     val_mask = dataset["split"] == "val"
-    test_mask = dataset["split"] == "test"
 
     X_train = dataset[train_mask][X_cols]
     y_train = dataset[train_mask]["label"]
@@ -71,22 +65,22 @@ def main():
     # A. Baseline replica (joriy deployed sozlamalar)
     m = GradientBoostingClassifier(n_estimators=300, max_depth=3, learning_rate=0.05, subsample=0.8, random_state=42)
     m.fit(X_train, y_train)
-    results["A_baseline_replica"] = report("A) Joriy deployed sozlama (replika)", m, dataset, val_mask, test_mask)
+    results["A_baseline_replica"] = report("A) Joriy deployed sozlama (replika)", m, dataset, val_mask)
 
     # A2. Baseline + balanced sample weight
     m = GradientBoostingClassifier(n_estimators=300, max_depth=3, learning_rate=0.05, subsample=0.8, random_state=42)
     m.fit(X_train, y_train, sample_weight=sw_train)
-    results["A2_baseline_balanced"] = report("A2) Joriy sozlama + balanced sample_weight", m, dataset, val_mask, test_mask)
+    results["A2_baseline_balanced"] = report("A2) Joriy sozlama + balanced sample_weight", m, dataset, val_mask)
 
     # B. HistGradientBoosting (balanced)
     m = HistGradientBoostingClassifier(max_iter=300, max_depth=4, learning_rate=0.05, class_weight="balanced", random_state=42)
     m.fit(X_train, y_train)
-    results["B_histgbm_balanced"] = report("B) HistGradientBoostingClassifier (balanced)", m, dataset, val_mask, test_mask)
+    results["B_histgbm_balanced"] = report("B) HistGradientBoostingClassifier (balanced)", m, dataset, val_mask)
 
     # B2. HistGradientBoosting (no balance)
     m = HistGradientBoostingClassifier(max_iter=300, max_depth=4, learning_rate=0.05, random_state=42)
     m.fit(X_train, y_train)
-    results["B2_histgbm"] = report("B2) HistGradientBoostingClassifier (balanslanmagan)", m, dataset, val_mask, test_mask)
+    results["B2_histgbm"] = report("B2) HistGradientBoostingClassifier (balanslanmagan)", m, dataset, val_mask)
 
     # C. LightGBM
     try:
@@ -94,11 +88,11 @@ def main():
         m = lgb.LGBMClassifier(n_estimators=300, max_depth=4, learning_rate=0.05, class_weight="balanced",
                                 random_state=42, verbose=-1)
         m.fit(X_train, y_train)
-        results["C_lightgbm_balanced"] = report("C) LightGBM (balanced)", m, dataset, val_mask, test_mask)
+        results["C_lightgbm_balanced"] = report("C) LightGBM (balanced)", m, dataset, val_mask)
 
         m = lgb.LGBMClassifier(n_estimators=300, max_depth=4, learning_rate=0.05, random_state=42, verbose=-1)
         m.fit(X_train, y_train)
-        results["C2_lightgbm"] = report("C2) LightGBM (balanslanmagan)", m, dataset, val_mask, test_mask)
+        results["C2_lightgbm"] = report("C2) LightGBM (balanslanmagan)", m, dataset, val_mask)
     except ImportError:
         print("LightGBM mavjud emas, o'tkazib yuborildi")
 
@@ -121,19 +115,18 @@ def main():
 
         m = XGBWrap(n_estimators=300, max_depth=4, learning_rate=0.05, random_state=42, eval_metric="mlogloss")
         m.fit(X_train, y_train, sample_weight=sw_train)
-        results["D_xgboost_balanced"] = report("D) XGBoost (balanced sample_weight)", m, dataset, val_mask, test_mask)
+        results["D_xgboost_balanced"] = report("D) XGBoost (balanced sample_weight)", m, dataset, val_mask)
 
         m = XGBWrap(n_estimators=300, max_depth=4, learning_rate=0.05, random_state=42, eval_metric="mlogloss")
         m.fit(X_train, y_train)
-        results["D2_xgboost"] = report("D2) XGBoost (balanslanmagan)", m, dataset, val_mask, test_mask)
+        results["D2_xgboost"] = report("D2) XGBoost (balanslanmagan)", m, dataset, val_mask)
     except ImportError:
         print("XGBoost mavjud emas, o'tkazib yuborildi")
 
-    print("\n\n=== YAKUNIY JADVAL (XAUUSD M15 TEST accuracy) ===")
-    print(f"  Baseline (deployed model): {BASELINE_XAUUSD_M15:.3f}")
+    print("\n\n=== YAKUNIY JADVAL (XAUUSD M15 VAL accuracy) ===")
     for name, acc in sorted(results.items(), key=lambda x: -x[1]):
-        mark = "  <-- BASELINE'DAN YAXSHI" if acc > BASELINE_XAUUSD_M15 else ""
-        print(f"  {name}: {acc:.3f}{mark}")
+        print(f"  {name}: {acc:.3f}")
+    print("TEST tanlash uchun ishlatilmadi; eski baseline bahosi mustaqil benchmark emas.")
 
 
 if __name__ == "__main__":

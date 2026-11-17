@@ -5,7 +5,7 @@ train_numeric_model.py bilan bir xil dataset/feature pipeline'dan foydalanadi
 optimallashtiradi -- feature yoki data o'zgarmaydi.
 
 VAL to'plamda umumiy accuracy'ni maksimallashtiradi. Eng yaxshi topilgan
-parametrlar bilan TEST natijasini ko'rsatadi (symbol/timeframe kesimida ham),
+parametrlar bilan VAL natijasini ko'rsatadi (symbol/timeframe kesimida ham),
 lekin modelni **saqlamaydi** -- yakuniy qarorni train_numeric_model.py orqali
 qo'lda qabul qilish uchun.
 """
@@ -36,7 +36,6 @@ def main():
     y = dataset["label"]
     train_mask = dataset["split"] == "train"
     val_mask = dataset["split"] == "val"
-    test_mask = dataset["split"] == "test"
 
     def objective(trial):
         params = {
@@ -66,24 +65,22 @@ def main():
     final_model = GradientBoostingClassifier(**best_params)
     final_model.fit(X[train_mask], y[train_mask])
 
-    for name, mask in [("VAL", val_mask), ("TEST", test_mask)]:
+    for name, mask in [("VAL", val_mask)]:
         preds = final_model.predict(X[mask])
         acc = accuracy_score(y[mask], preds)
         print(f"\n=== {name} (accuracy={acc:.3f}) ===")
         print(classification_report(y[mask], preds, target_names=final_model.classes_))
         print(confusion_matrix(y[mask], preds, labels=final_model.classes_))
 
-    print("\n=== TEST symbol/timeframe kesimida ===")
-    test_df = dataset[test_mask].copy()
-    test_df["pred"] = final_model.predict(X[test_mask])
-    for (symbol, timeframe), grp in test_df.groupby(["symbol", "timeframe"]):
+    print("\n=== VAL symbol/timeframe kesimida ===")
+    val_df = dataset[val_mask].copy()
+    val_df["pred"] = final_model.predict(X[val_mask])
+    for (symbol, timeframe), grp in val_df.groupby(["symbol", "timeframe"]):
         acc = accuracy_score(grp["label"], grp["pred"])
         print(f"  {symbol} {timeframe}: n={len(grp)} accuracy={acc:.3f}")
 
-    print("\n(Eslatma: bu skript modelni saqlamaydi. Agar natija joriy 46%")
-    print(" (XAUUSD M15 TEST) dan yaxshi bo'lsa, train_numeric_model.py dagi")
-    print(" GradientBoostingClassifier parametrlarini shu qiymatlarga o'zgartirib")
-    print(" qayta ishga tushiring.)")
+    print("\n(Eslatma: bu skript modelni saqlamaydi va TEST'ni tanlash uchun ishlatmaydi.")
+    print(" Parametrlarni VAL asosida tanlang; eski test bahosi mustaqil benchmark emas.)")
 
 
 if __name__ == "__main__":

@@ -22,5 +22,8 @@
     "Buy",
     "Hold",
     "Sell"
-  ]
+  ],
+  "provenance_status": "legacy_unverified",
+  "model_sha256": "4a0265460155b454b70357223507f4a4943cc26eca2b2be9069af2fadbbb252f",
+  "provenance_note": "Original training dataset, split boundaries and evaluation lineage are unavailable; recorded hash identifies this artifact only."
 }

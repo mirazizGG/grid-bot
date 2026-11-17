@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Grid-Bot Chart Tahlil</title>
+  <title>Grid-Bot · Boshqaruv markazi</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📊</text></svg>">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -16,38 +16,80 @@
         </div>
         <div>
           <h1>Grid-Bot</h1>
-          <p class="tagline">Chart tahlil terminali</p>
+          <p class="tagline">Tahlil va boshqaruv terminali</p>
         </div>
       </div>
 
       <nav class="side-nav">
-        <button id="tab-analyze" class="active">
+        <button id="tab-control" class="active">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+          Boshqaruv
+        </button>
+        <button id="tab-analyze">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 13l3-3 2 2 4-5"/></svg>
           Tahlil
         </button>
         <button id="tab-dashboard">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
-          Dashboard
+          Natijalar
         </button>
       </nav>
-
-      <div class="sidebar-footer">
-        <span class="live-dot"></span>Custom Model + Gemini + Qwen
-      </div>
+      <div class="sidebar-footer">Mahalliy boshqaruv<br><span>Grid-Bot · texnik tahlil</span></div>
     </aside>
 
     <main class="main">
       <div class="service-status" id="service-status" role="status">Xizmatlar tekshirilmoqda…</div>
-      <section id="view-analyze">
+      <section id="view-control">
+        <div class="control-heading">
+          <div><div class="eyebrow">GRID-BOT / TERMINAL</div><h2>Boshqaruv markazi</h2><p>Xizmatlar, modellar va sozlamalar — bir joyda.</p></div>
+          <div class="control-heading-actions"><span id="control-updated" class="outcome-hint" role="status">Ulanmoqda…</span><button type="button" class="secondary" id="control-refresh">↻ Yangilash</button></div>
+        </div>
+        <div id="control-error" role="alert"></div>
+        <div class="control-metrics" id="control-metrics" aria-live="polite"><div class="stat-tile"><div class="label">Tizim holati</div><div class="value">—</div><div class="outcome-hint">Ma’lumotlar yuklanmoqda…</div></div></div>
+
+        <div class="section-heading"><div><h3>Xizmatlar</h3><p>Tahlil uchun kerakli ulanishlar va boshqaruv.</p></div><div class="analysis-switch"><span id="control-analysis-status">Tahlil holati tekshirilmoqda</span><button type="button" class="secondary" id="control-pause" disabled>…</button></div></div>
+        <div class="control-services">
+          <article class="card control-service"><div class="service-card-heading"><span class="service-symbol mt5-symbol">M</span><div><h3>MetaTrader 5</h3><span id="control-mt5-state" class="status-pill">Tekshirilmoqda</span></div></div><p id="control-mt5-detail">Jonli narx va bozor konteksti.</p><div class="control-actions"><button type="button" class="secondary" id="control-mt5-check" disabled>Ulanishni tekshirish</button></div><p class="capability-reason" id="control-mt5-reason"></p></article>
+          <article class="card control-service"><div class="service-card-heading"><span class="service-symbol gemini-symbol">✦</span><div><h3>Gemini Vision</h3><span id="control-gemini-state" class="status-pill">Tekshirilmoqda</span></div></div><p id="control-gemini-detail">Asosiy chart tahlili.</p><div class="control-actions"><button type="button" class="secondary" id="control-open-settings">Sozlamalarni ochish</button></div><p class="capability-reason">Kalit holati tekshiriladi; bu tekshiruv pullik so‘rov yubormaydi.</p></article>
+          <article class="card control-service"><div class="service-card-heading"><span class="service-symbol qwen-symbol">Q</span><div><h3>Ollama / Qwen</h3><span id="control-qwen-state" class="status-pill">Tekshirilmoqda</span></div></div><p id="control-qwen-detail">Mustaqil mahalliy model.</p><div class="control-actions"><button type="button" class="secondary" id="control-ollama-start" disabled>Ishga tushirish</button><button type="button" class="secondary" id="control-ollama-restart" disabled>Qayta boshlash</button><button type="button" class="quiet danger-text" id="control-ollama-stop" disabled>To‘xtatish</button></div><p class="capability-reason" id="control-ollama-reason"></p></article>
+        </div>
+
+        <div class="control-columns">
+          <article class="card"><div class="section-heading"><div><h3>Modellar</h3><p>Faol versiya va tayyor nomzod holati.</p></div><button type="button" class="secondary compact" id="control-validate-model">Tekshirish</button></div><div id="control-models"><p class="muted">Model ma’lumoti yuklanmoqda…</p></div><div class="control-actions"><button type="button" class="secondary" id="control-activate-candidate" disabled>Nomzodni faollashtirish</button><button type="button" class="quiet" id="control-rollback" disabled>Oldingi modelga qaytish</button></div><div class="inline-confirm" id="control-model-confirm" hidden><p id="control-model-confirm-text"></p><div class="control-actions"><button type="button" class="primary compact" id="control-model-confirm-yes">Tasdiqlash</button><button type="button" class="secondary compact" id="control-model-confirm-no">Bekor qilish</button></div></div></article>
+          <article class="card"><div class="section-heading"><div><h3>Vazifalar</h3><p>Fon jarayonlarining haqiqiy holati.</p></div><button type="button" class="secondary compact" id="control-evaluate">Natijalarni tekshirish</button></div><div id="control-action-status" class="action-feedback" role="status"></div><div id="control-jobs"><p class="muted">Vazifalar yuklanmoqda…</p></div></article>
+        </div>
+
+        <article class="card settings-card" id="control-settings-card">
+          <div class="section-heading"><div><h3>Sozlamalar</h3><p>O‘zgarishlar «Saqlash» bosilgandan keyin qo‘llanadi.</p></div><span class="settings-state" id="control-settings-state" role="status">Yuklanmoqda…</span></div>
+          <p id="control-settings-warning" class="model-warning muted" hidden></p>
+          <form id="control-settings-form">
+            <fieldset id="control-settings-fields" disabled>
+              <div class="settings-grid">
+                <div class="settings-group"><h4>Tahlil xizmatlari</h4><label class="toggle-field"><input type="checkbox" id="setting-analysis-enabled"><span>Yangi tahlillarga ruxsat</span></label><label class="toggle-field"><input type="checkbox" id="setting-gemini-enabled"><span>Gemini tahlili</span></label><label class="toggle-field"><input type="checkbox" id="setting-qwen-enabled"><span>Qwen bilan alohida taqqoslash</span></label><div class="field"><label for="setting-gemini-model">Gemini modeli</label><input type="text" id="setting-gemini-model" required></div><div class="field"><label for="setting-qwen-model">Qwen modeli</label><input type="text" id="setting-qwen-model" required></div><div class="field"><label for="setting-qwen-timeout">Qwen kutish muddati · soniya</label><input type="number" id="setting-qwen-timeout" min="5" max="600" step="1" required></div></div>
+                <div class="settings-group"><h4>Qaror filtrlari</h4><div class="field"><label for="setting-min-custom-confidence">Custom model eng kam bahosi</label><input type="number" id="setting-min-custom-confidence" min="0" max="1" step="0.01" required></div><div class="field"><label for="setting-min-vision-override-confidence">Gemini ustunlik chegarasi</label><input type="number" id="setting-min-vision-override-confidence" min="0" max="1" step="0.01" required></div><div class="field"><label for="setting-custom-model-weight">Custom model vazni</label><input type="number" id="setting-custom-model-weight" min="0" max="1" step="0.01" required></div><div class="field"><label for="setting-vision-ai-weight">Gemini vazni</label><input type="number" id="setting-vision-ai-weight" min="0" max="1" step="0.01" required></div><p class="field-hint">Ikki vazn yig‘indisi 1 bo‘lishi kerak. Model bahosi foyda ehtimoli sifatida tasdiqlanmagan.</p></div>
+                <div class="settings-group"><h4>Standart tanlov va kirish</h4><div class="field"><label for="setting-default-symbol">Savdo vositasi</label><input type="text" id="setting-default-symbol" required></div><div class="field"><label for="setting-default-timeframe">Vaqt oralig‘i</label><select id="setting-default-timeframe"><option>M1</option><option>M5</option><option>M15</option><option>M30</option><option>H1</option><option>H4</option><option>D1</option></select></div><div class="field"><label for="setting-gemini-api-key">Gemini API kalitini yangilash</label><input type="password" id="setting-gemini-api-key" autocomplete="new-password" placeholder="Yangi kalitni kiriting" spellcheck="false"></div><p class="field-hint" id="control-api-key-status">Kalit holati noma’lum.</p><p class="field-hint">Saqlangan kalit ko‘rsatilmaydi. Bo‘sh maydon mavjud kalitni o‘zgartirmaydi.</p></div>
+              </div>
+              <div class="settings-footer"><span id="control-settings-feedback" role="status"></span><div class="control-actions"><button type="button" class="quiet" id="control-settings-reset">O‘zgarishlarni bekor qilish</button><button type="submit" class="primary compact" id="control-settings-save" disabled>Sozlamalarni saqlash</button></div></div>
+            </fieldset>
+          </form>
+        </article>
+
+        <div class="control-columns lower-columns">
+          <article class="card"><div class="section-heading"><div><h3>Ma’lumotlar va zaxira</h3><p>Tarixni eksport qilish va bazaning zaxira nusxalari.</p></div></div><div id="control-storage" class="storage-summary">Ma’lumotlar yuklanmoqda…</div><div class="control-actions"><button type="button" class="secondary" id="control-backup">Zaxira nusxa olish</button><a class="secondary" href="/control/history/export" download>Tarixni CSV yuklash ↓</a></div><div id="control-backups" class="backup-list"></div></article>
+          <article class="card"><div class="section-heading"><div><h3>Backend</h3><p>Server jarayoni va qayta ishga tushirish.</p></div><span class="status-pill" id="control-backend-state">Tekshirilmoqda</span></div><div id="control-process" class="storage-summary">Jarayon ma’lumoti yuklanmoqda…</div><div class="control-actions"><button type="button" class="secondary" id="control-backend-restart" disabled>Backendni qayta ishga tushirish</button><button type="button" class="quiet" id="control-go-analyze">Chart tahliliga o‘tish →</button></div><p class="capability-reason" id="control-backend-reason"></p></article>
+        </div>
+        <details class="card control-log-panel" id="control-logs-panel"><summary>Server jurnali <span>Maxfiy qiymatlar yashiriladi</span></summary><div class="log-toolbar"><label for="control-log-source">Manba</label><select id="control-log-source"><option value="server">Server</option><option value="error">Xatolar</option><option value="ollama">Ollama</option></select><button type="button" class="quiet" id="control-logs-refresh">Yangilash</button><span class="outcome-hint" id="control-logs-status"></span></div><pre id="control-logs" class="log-output">Jurnalni oching yoki yangilang.</pre></details>
+      </section>
+      <section id="view-analyze" style="display:none;">
         <div class="page-header">
           <h2>Chart tahlil</h2>
-          <p>Joriy chartni yuklang. Gemini va mahalliy Qwen xulosalarini solishtiring.</p>
+          <p>Chart rasmini yuklang va natijani ko‘ring.</p>
         </div>
 
         <div class="card">
           <div class="symbol-row">
             <div class="field">
-              <label for="symbol-select">Symbol</label>
+              <label for="symbol-select">Savdo vositasi</label>
               <select id="symbol-select">
                 <option value="XAUUSD" selected>XAUUSD (Gold)</option>
                 <option value="EURUSD">EURUSD</option>
@@ -60,7 +102,7 @@
               <input type="text" id="symbol-custom" placeholder="masalan BTCUSD" style="display:none;">
             </div>
             <div class="field">
-              <label for="timeframe-select">Timeframe</label>
+              <label for="timeframe-select">Vaqt oralig‘i</label>
               <select id="timeframe-select">
                 <option value="M1">M1</option>
                 <option value="M5">M5</option>
@@ -72,7 +114,7 @@
               </select>
             </div>
           </div>
-          <p class="field-hint">MT5 terminali ochiq bo'lsa, shu symbol uchun jonli narx va RSI/MACD avtomatik qo'shiladi.</p>
+          <p class="field-hint">MT5 ochiq va hisobga ulangan bo‘lishi kerak.</p>
 
           <label class="dropzone" id="dropzone" for="file-input">
             <div id="dropzone-empty">
@@ -86,7 +128,7 @@
             <input type="file" id="file-input" accept="image/png,image/jpeg,image/webp">
           </label>
           <div class="dropzone-filename" id="dropzone-filename"></div>
-          <label class="confirm-chart"><input type="checkbox" id="chart-confirm"> <span>Rasm tanlangan symbol va timeframe’ga mos, hozirgi chart ekanini tekshirdim.</span></label>
+          <label class="confirm-chart"><input type="checkbox" id="chart-confirm"> <span>Rasm hozirgi chartga, tanlangan vosita va vaqt oralig‘iga mosligini tekshirdim.</span></label>
           <div style="margin-top:16px; text-align:center;">
             <button class="primary" id="analyze-btn" disabled>Tahlil qilish</button>
           </div>
@@ -98,33 +140,35 @@
 
       <section id="view-dashboard" style="display:none;">
         <div class="page-header">
-          <h2>Dashboard</h2>
-          <p>Signallaringizni kuzating va keyingi narx harakati bilan solishtiring.</p>
+          <h2>Natijalar</h2>
+          <p>Oldingi tahlillaringiz va ularning natijalari.</p>
         </div>
         <div class="stats-row" id="stats-tiles"></div>
         <div class="card">
-          <h3 class="card-title">Gemini va Qwen natijalari</h3>
-          <p class="section-description">Gipotetik taqqoslash: bir xil joriy narx, ATR va 24 soatlik muddat. Qwen uchun darhol kirish faraz qilinadi; Gemini kutishni aytsa hisoblanmaydi. Namuna sonlari farq qilishi mumkin.</p>
-          <div class="eval-grid" id="model-tiles"></div>
-        </div>
-        <div class="card">
-          <h3 class="card-title">Signal natijalari (TP/SL)</h3>
-          <p class="section-description">24 soatlik kuzatuv · TP/SL urilgan holatlar bo‘yicha. Ochiq, muddati tugagan va eski usulda baholangan holatlar foizga kiritilmaydi.</p>
-          <div class="eval-grid" id="eval-tiles"></div>
-          <div class="eval-actions">
-            <button class="primary" id="eval-btn">Natijalarni yangilash</button>
-            <span class="outcome-hint" id="eval-status">MT5 ochiq bo‘lishi kerak. Dastlabki qisman daqiqa ticklar bilan tekshiriladi; keyin M1 shamlar. Xarajatlar to‘liq hisoblanmaydi.</span>
-          </div>
-        </div>
-        <div class="card">
-          <h3 class="card-title">Signal taqsimoti</h3>
-          <div class="bar-chart" id="bar-chart"></div>
-        </div>
-        <div class="card">
-          <h3 class="card-title">Tarix</h3>
-          <p class="section-description">Oxirgi 30 ta tahlil · batafsil ko‘rish uchun «Ochish» ni bosing</p>
+          <h3 class="card-title">Tahlillar tarixi</h3>
+          <p class="section-description">Tafsilotlarni ko‘rish uchun «Ochish»ni bosing.</p>
+          <div class="history-tools"><div class="field"><label for="history-symbol">Vosita</label><input type="text" id="history-symbol" placeholder="Barchasi"></div><div class="field"><label for="history-signal">Signal</label><select id="history-signal"><option value="">Barchasi</option><option>Buy</option><option>Sell</option><option>Hold</option></select></div><button type="button" class="secondary" id="history-filter">Filtrlash</button><a class="quiet" href="/control/history/export" download>CSV eksport ↓</a></div>
+          <p class="section-description" id="stats-excluded" hidden></p>
           <div id="history-container"></div>
+          <div class="history-pagination"><span id="history-page" class="outcome-hint"></span><div class="control-actions"><button type="button" class="secondary compact" id="history-prev" disabled>← Oldingi</button><button type="button" class="secondary compact" id="history-next" disabled>Keyingi →</button></div></div>
         </div>
+        <details class="card details-card">
+          <summary>Batafsil statistika</summary>
+          <div class="details-content">
+            <h3 class="card-title">Signal natijalari</h3>
+            <p class="section-description">24 soatlik kuzatuv. Foiz faqat TP yoki SL urilgan signallar bo‘yicha hisoblanadi; ochiq, muddati tugagan, ma’lumotsiz va eski natijalar kirmaydi.</p>
+            <div class="eval-grid" id="eval-tiles"></div>
+            <div class="eval-actions">
+              <button class="primary" id="eval-btn">Natijalarni yangilash</button>
+              <span class="outcome-hint" id="eval-status">MT5 ochiq bo‘lishi kerak. Bid/Ask tarixi tekshiriladi; komissiya va slippage to‘liq hisoblanmaydi.</span>
+            </div>
+            <h3 class="card-title details-subtitle">Gemini va Qwen taqqoslash</h3>
+            <p class="section-description">Bu faraziy natijalar: bir xil narx, ATR va 24 soatlik muddat ishlatiladi. Qwen uchun darhol kirish faraz qilinadi; Gemini kutishni aytsa hisoblanmaydi. Namuna sonlari farq qilishi mumkin.</p>
+            <div class="eval-grid" id="model-tiles"></div>
+            <h3 class="card-title details-subtitle">Signal taqsimoti</h3>
+            <div class="bar-chart" id="bar-chart"></div>
+          </div>
+        </details>
       </section>
     </main>
   </div>

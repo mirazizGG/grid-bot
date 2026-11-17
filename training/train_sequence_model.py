@@ -18,6 +18,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 import mt5_context  # noqa: E402
 import sequence_model  # noqa: E402
+try:
+    from .train_numeric_model import validate_labeled
+except ImportError:
+    from train_numeric_model import validate_labeled
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 MULTI_DIR = os.path.join(_THIS_DIR, "..", "data_pipeline", "output", "multi")
@@ -96,6 +100,7 @@ def run_epoch(model, loader, optimizer, criterion, train_mode, device):
 
 def main():
     labeled = pd.read_parquet(COMBINED_LABELED)
+    validate_labeled(labeled)
     print("Sequence + static feature'lar hisoblanmoqda...")
     seqs, statics, labels, splits = build_dataset(labeled)
     print(f"{len(labels)} qator tayyor, sequence shape={seqs.shape}, static dim={statics.shape[1]}")

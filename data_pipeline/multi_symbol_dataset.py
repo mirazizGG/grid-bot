@@ -1,16 +1,20 @@
 """Bir nechta symbol va timeframe uchun MT5 tarixini yuklab, triple-barrier
-label yaratadi -- FAQAT raqamli model uchun (rasm generatsiya qilinmaydi,
-shuning uchun tez ishlaydi). Har (symbol, timeframe) juftligi alohida
-chronological split bilan label'lanadi, so'ng bittalashtirilgan parquet'ga
-yoziladi -- training/train_numeric_model.py shuni o'qiydi.
+label yaratadi -- FAQAT raqamli model uchun. Barcha symbol va timeframe'lar
+umumiy vaqt chegaralari bilan ajratiladi, chegaradan o'tuvchi label'lar chiqariladi.
 """
 import os
 
 import numpy as np
 import pandas as pd
 
-from mt5_fetch import fetch_ohlc
-from config import (
+try:
+    from .mt5_fetch import fetch_ohlc
+    from . import config
+except ImportError:  # to'g'ridan-to'g'ri skript sifatida ishga tushirish
+    from mt5_fetch import fetch_ohlc
+    import config
+
+(
     WINDOW_SIZE,
     WINDOW_STRIDE,
     LOOKAHEAD_BARS,
@@ -19,7 +23,9 @@ from config import (
     SL_ATR_MULT,
     TRAIN_RATIO,
     VAL_RATIO,
-)
+) = (config.WINDOW_SIZE, config.WINDOW_STRIDE, config.LOOKAHEAD_BARS,
+     config.ATR_PERIOD, config.TP_ATR_MULT, config.SL_ATR_MULT,
+     config.TRAIN_RATIO, config.VAL_RATIO)
 
 # XAUUSD (M15) allaqachon data_pipeline/output/ohlc_raw.parquet + labeled_windows.parquet
 # ichida bor (2995 qator) -- bu yerda YANA shu juftlik qo'shiladi (H1 bilan birga),
@@ -83,8 +89,9 @@ def label_windows(df: pd.DataFrame, symbol: str, timeframe: str) -> pd.DataFrame
             if None not in (buy_win_idx, buy_lose_idx, sell_win_idx, sell_lose_idx):
                 break
 
-        buy_success = buy_win_idx is not None and (buy_lose_idx is None or buy_win_idx <= buy_lose_idx)
-        sell_success = sell_win_idx is not None and (sell_lose_idx is None or sell_win_idx <= sell_lose_idx)
+        # A bar does not reveal ordering; if both levels hit, treat it as a loss.
+        buy_success = buy_win_idx is not None and (buy_lose_idx is None or buy_win_idx < buy_lose_idx)
+        sell_success = sell_win_idx is not None and (sell_lose_idx is None or sell_win_idx < sell_lose_idx)
 
         if buy_success and not sell_success:
             label = "Buy"
@@ -100,19 +107,44 @@ def label_windows(df: pd.DataFrame, symbol: str, timeframe: str) -> pd.DataFrame
             "timeframe": timeframe,
             "window_end_idx": i,
             "time": df["time"].iloc[i],
+            # The last lookahead candle can touch a barrier until it closes.
+            "label_end_time": pd.Timestamp(df["time"].iloc[i + LOOKAHEAD_BARS]) + timeframe_delta(timeframe),
             "label": label,
+            "label_version": 2,
         })
 
-    labeled = pd.DataFrame(rows)
-    n_rows = len(labeled)
-    train_end = int(n_rows * TRAIN_RATIO)
-    val_end = train_end + int(n_rows * VAL_RATIO)
-    split = np.empty(n_rows, dtype=object)
-    split[:train_end] = "train"
-    split[train_end:val_end] = "val"
-    split[val_end:] = "test"
-    labeled["split"] = split
-    return labeled
+    return pd.DataFrame(rows)
+
+
+def timeframe_delta(timeframe: str) -> pd.Timedelta:
+    unit = {"M": "min", "H": "h", "D": "d"}
+    if not timeframe or timeframe[0] not in unit or not timeframe[1:].isdigit() or int(timeframe[1:]) < 1:
+        raise ValueError(f"Noma'lum timeframe: {timeframe}")
+    return pd.Timedelta(int(timeframe[1:]), unit=unit[timeframe[0]])
+
+
+def assign_shared_splits(labeled: pd.DataFrame) -> pd.DataFrame:
+    """One chronological split across instruments; purge labels crossing a boundary."""
+    if labeled.empty:
+        raise ValueError("Label'lar yo'q; split yaratib bo'lmadi")
+    out = labeled.copy()
+    out["time"] = pd.to_datetime(out["time"], utc=True)
+    out["label_end_time"] = pd.to_datetime(out["label_end_time"], utc=True)
+    if out[["time", "label_end_time"]].isna().any().any():
+        raise ValueError("Vaqti noma'lum label mavjud")
+    times = pd.Series(out["time"].unique()).sort_values().reset_index(drop=True)
+    if len(times) < 3:
+        raise ValueError("Split uchun vaqtlar yetarli emas")
+    val_start = times.iloc[int(len(times) * TRAIN_RATIO)]
+    test_start = times.iloc[int(len(times) * (TRAIN_RATIO + VAL_RATIO))]
+    out["split"] = np.where(out["time"] < val_start, "train",
+                     np.where(out["time"] < test_start, "val", "test"))
+    crosses = ((out["split"] == "train") & (out["label_end_time"] > val_start) |
+               (out["split"] == "val") & (out["label_end_time"] > test_start))
+    out = out.loc[~crosses].copy()
+    if set(out["split"]) != {"train", "val", "test"}:
+        raise ValueError("Purge'dan keyin barcha split'lar uchun ma'lumot yetarli emas")
+    return out
 
 
 def main():
@@ -131,14 +163,13 @@ def main():
         raw.to_parquet(raw_path, index=False)
 
         labeled = label_windows(raw, symbol, timeframe)
-        labeled_path = os.path.join(OUT_DIR, f"{symbol}_{timeframe}_labeled.parquet")
-        labeled.to_parquet(labeled_path, index=False)
-
         print(f"  {len(raw)} bar, {len(labeled)} label'langan window")
         print(f"  {labeled['label'].value_counts().to_dict()}")
         all_labeled.append(labeled)
 
-    combined = pd.concat(all_labeled, ignore_index=True)
+    combined = assign_shared_splits(pd.concat(all_labeled, ignore_index=True))
+    for (symbol, timeframe), group in combined.groupby(["symbol", "timeframe"]):
+        group.to_parquet(os.path.join(OUT_DIR, f"{symbol}_{timeframe}_labeled.parquet"), index=False)
     combined.to_parquet(COMBINED_OUT, index=False)
     print(f"\nJami: {len(combined)} qator -> {COMBINED_OUT}")
     print(combined.groupby(["symbol", "timeframe"])["label"].count())

@@ -1,13 +1,34 @@
 """Gemini API (vision) orqali chart rasmini mustaqil tahlil qilish."""
 import json
 import math
+import threading
 
 from google import genai
 from google.genai import types
 
 from config import GEMINI_API_KEY, GEMINI_MODEL
 
-_client = genai.Client(api_key=GEMINI_API_KEY)
+_client = None
+_CLIENT_LOCK = threading.RLock()
+
+
+def _get_client():
+    global _client
+    with _CLIENT_LOCK:
+        if _client is None:
+            if not GEMINI_API_KEY.strip():
+                raise RuntimeError("Gemini API kaliti sozlanmagan. Boshqaruv panelida Gemini kalitini kiriting.")
+            _client = genai.Client(api_key=GEMINI_API_KEY)
+        return _client
+
+
+def configure(api_key, model):
+    global GEMINI_API_KEY, GEMINI_MODEL, _client
+    with _CLIENT_LOCK:
+        if GEMINI_API_KEY != api_key:
+            _client = None
+        GEMINI_API_KEY, GEMINI_MODEL = api_key, model
+
 
 _SYSTEM_PROMPT = """Sen tajribali texnik tahlilchisan. Senga savdo chart (candlestick) \
 rasmi beriladi, ba'zan unga qo'shimcha ravishda MT5'dan olingan JONLI (real) narx va \
@@ -115,41 +136,93 @@ def _format_base_context(ctx: dict) -> str:
     )
 
 
-def analyze_image(image_bytes: bytes, media_type: str = "image/png", market_context: dict | None = None) -> dict:
-    parts = [types.Part.from_bytes(data=image_bytes, mime_type=media_type)]
-    if market_context:
-        parts.append(_format_context(market_context))
-    parts.append("Shu chartni tahlil qil va JSON javob ber.")
-
-    response = _client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=parts,
-        config=types.GenerateContentConfig(
-            system_instruction=_SYSTEM_PROMPT,
-            response_mime_type="application/json",
-            temperature=0.0,  # bir xil kirishda bir xil javob -- natijalar takrorlanuvchan bo'lsin
-        ),
-    )
-
-    parsed = json.loads(response.text)
-    signal = parsed.get("signal")
+def _finite_number(value, field: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"Gemini javobida {field} son bo'lishi kerak")
     try:
-        confidence = float(parsed["confidence"])
-    except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError("Gemini javobida ishonch qiymati noto'g'ri") from exc
-    if signal not in ("Buy", "Sell", "Hold") or not math.isfinite(confidence) or not 0 <= confidence <= 1:
+        number = float(value)
+    except OverflowError as exc:
+        raise ValueError(f"Gemini javobida {field} qiymati noto'g'ri") from exc
+    if not math.isfinite(number):
+        raise ValueError(f"Gemini javobida {field} qiymati chekli son bo'lishi kerak")
+    return number
+
+
+def _validate_response(text: str) -> dict:
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Gemini javobi kutilgan JSON formatida emas") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError("Gemini javobi JSON obyekt bo'lishi kerak")
+
+    signal = parsed.get("signal")
+    confidence = _finite_number(parsed.get("confidence"), "confidence")
+    if signal not in ("Buy", "Sell", "Hold") or not 0 <= confidence <= 1:
         raise ValueError("Gemini javobida signal yoki ishonch qiymati noto'g'ri")
+    for field in ("trend", "reasoning"):
+        if not isinstance(parsed.get(field), str):
+            raise ValueError(f"Gemini javobida {field} matn bo'lishi kerak")
+    entry_type = parsed.get("entry_type")
+    if entry_type not in (None, "market", "wait_pullback", "wait_breakout"):
+        raise ValueError("Gemini javobida entry_type qiymati noto'g'ri")
+    entry_note = parsed.get("entry_note")
+    if entry_note is not None and not isinstance(entry_note, str):
+        raise ValueError("Gemini javobida entry_note matn yoki null bo'lishi kerak")
+
+    prices = {}
+    for field in ("entry_price", "tp_price", "sl_price"):
+        value = parsed.get(field)
+        if value is not None:
+            value = _finite_number(value, field)
+            if value <= 0:
+                raise ValueError(f"Gemini javobida {field} musbat son bo'lishi kerak")
+        prices[field] = value
 
     return {
         "source": "gemini",
         "prompt_version": PROMPT_VERSION,
         "signal": signal,
         "confidence": confidence,
-        "trend": parsed.get("trend", ""),
-        "reasoning": parsed.get("reasoning", ""),
-        "entry_type": parsed.get("entry_type"),
-        "entry_note": parsed.get("entry_note"),
-        "entry_price": parsed.get("entry_price"),
-        "tp_price": parsed.get("tp_price"),
-        "sl_price": parsed.get("sl_price"),
+        "trend": parsed["trend"],
+        "reasoning": parsed["reasoning"],
+        "entry_type": entry_type,
+        "entry_note": entry_note,
+        **prices,
     }
+
+
+def analyze_image(image_bytes: bytes, media_type: str = "image/png", market_context: dict | None = None,
+                  settings: dict | None = None) -> dict:
+    with _CLIENT_LOCK:
+        key = settings["gemini_api_key"] if settings else GEMINI_API_KEY
+        model = settings["gemini_model"] if settings else GEMINI_MODEL
+        temporary_client = key != GEMINI_API_KEY
+        if key == GEMINI_API_KEY:
+            client = _get_client()
+        elif not key.strip():
+            raise RuntimeError("Gemini API kaliti sozlanmagan")
+        else:
+            client = genai.Client(api_key=key)
+    parts = [types.Part.from_bytes(data=image_bytes, mime_type=media_type)]
+    if market_context:
+        parts.append(_format_context(market_context))
+    parts.append("Shu chartni tahlil qil va JSON javob ber.")
+
+    try:
+        response = client.models.generate_content(
+            model=model,
+            contents=parts,
+            config=types.GenerateContentConfig(
+                system_instruction=_SYSTEM_PROMPT,
+                response_mime_type="application/json",
+                temperature=0.0,
+            ),
+        )
+    finally:
+        if temporary_client:
+            client.close()
+
+    result = _validate_response(response.text)
+    result["model"] = model
+    return result

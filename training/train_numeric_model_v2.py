@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import mt5_context  # noqa: E402
+from train_numeric_model import validate_labeled  # noqa: E402
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 MULTI_DIR = os.path.join(_THIS_DIR, "..", "data_pipeline", "output", "multi_v2")
@@ -28,6 +29,7 @@ META_OUT = os.path.join(_THIS_DIR, "..", "backend", "model", "numeric_model_v2_m
 
 def main():
     labeled = pd.read_parquet(COMBINED_LABELED)
+    validate_labeled(labeled)
     print(f"Label'langan qatorlar: {len(labeled)}")
 
     print("Feature'lar hisoblanmoqda (bu kattaroq datasetda biroz uzoqroq davom etadi)...")

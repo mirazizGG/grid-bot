@@ -1,8 +1,10 @@
 """SQLite orqali tahlil tarixini saqlash (SQLAlchemy)."""
 import datetime
 import json
+import time
+import uuid
 
-from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, Text
+from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, Text, func, update, or_, and_
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from config import DB_PATH
@@ -81,6 +83,8 @@ _add_missing_columns()
 
 
 def save_analysis(image_path: str, consensus: dict) -> Analysis:
+    # Refuse invalid provider/indicator values before opening a transaction.
+    raw_result = json.dumps(consensus, allow_nan=False)
     session = SessionLocal()
     try:
         record = Analysis(
@@ -95,11 +99,47 @@ def save_analysis(image_path: str, consensus: dict) -> Analysis:
             entry_price=consensus.get("entry_price"),
             tp_price=consensus.get("tp_price"),
             sl_price=consensus.get("sl_price"),
-            raw_result=json.dumps(consensus),
+            raw_result=raw_result,
         )
+        if consensus.get("published_at"):
+            published = datetime.datetime.fromisoformat(consensus["published_at"].replace("Z", "+00:00"))
+            record.timestamp = published.astimezone(datetime.timezone.utc).replace(tzinfo=None)
         session.add(record)
         session.commit()
         session.refresh(record)
         return record
+    finally:
+        session.close()
+
+
+def patch_analysis_result(session, record_id: int, fields: dict, qwen_request_id: str | None = None):
+    """Patch JSON paths atomically so model evaluation cannot erase a new Qwen result."""
+    expression = Analysis.raw_result
+    for path, value in fields.items():
+        expression = func.json_set(expression, path, func.json(json.dumps(value, allow_nan=False)))
+    statement = update(Analysis).where(Analysis.id == record_id)
+    if qwen_request_id is not None:
+        statement = statement.where(func.json_extract(Analysis.raw_result, "$.qwen_vision.request_id") == qwen_request_id)
+    result = session.execute(statement.values(raw_result=expression), execution_options={"synchronize_session": False})
+    return bool(result.rowcount)
+
+
+def claim_qwen_analysis(record_id: int, model: str, lease_seconds: float = 150):
+    """Only one request can start the optional analysis, including across workers."""
+    session = SessionLocal()
+    try:
+        now = time.time()
+        running = json.dumps({"source": "qwen", "model": model, "status": "running",
+                              "request_id": uuid.uuid4().hex, "lease_expires_at": now + lease_seconds})
+        result = session.execute(update(Analysis).where(
+            Analysis.id == record_id,
+            or_(func.json_extract(Analysis.raw_result, "$.qwen_vision.status").in_(("not_requested", "error")),
+                and_(func.json_extract(Analysis.raw_result, "$.qwen_vision.status") == "running",
+                     func.coalesce(func.json_extract(Analysis.raw_result, "$.qwen_vision.lease_expires_at"), 0) < now)),
+        ).values(raw_result=func.json_set(Analysis.raw_result, "$.qwen_vision", func.json(running))),
+            execution_options={"synchronize_session": False})
+        session.commit()
+        row = session.get(Analysis, record_id)
+        return (row.to_dict() if row else None), bool(result.rowcount)
     finally:
         session.close()
